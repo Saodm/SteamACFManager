@@ -37,7 +37,66 @@ Generating an ACF for those makes Steam believe the game is installed and downlo
 
 ---
 
-## 2. Status model
+## 2. Typical use cases
+
+### 2.1 You moved a Steam library and the ACF files did not come along
+
+You copied or moved `steamapps\common\<Game>` to another drive/library (or restored a backup), and now
+Steam says the game is not installed, or wants to download it all over again — because
+`appmanifest_<AppID>.acf` stayed behind. Steam only recognises an install through that file, so the
+game folder alone is invisible to it.
+
+1. Close Steam.
+2. Start the tool — the folder is listed as **⚠ Missing ACF** (files verified complete, no ACF in any library).
+3. Select it and press **Repair / Generate Selected**. The ACF is written into that library's
+   `steamapps` folder with the current public `buildid` and depot manifests taken from Steam's own
+   cache, so Steam accepts the files already on disk instead of re-downloading them.
+4. Start Steam — the game shows **Play**.
+
+Command line: `SteamACFManager.exe generate "<folder name>"`
+
+Notes:
+
+* The AppID is looked up offline from Steam's cache (`installdir` / game-name index). If that is not
+  possible, drop a `steam_appid.txt` containing the AppID into the folder, or type the AppID in the dialog.
+* If the *old* library still holds a leftover ACF for the same AppID while its game folder is gone
+  (the usual result of a move), the tool refuses to generate and tells you to delete that stale ACF
+  first — otherwise Steam would see two installs of the same game. Delete it, rescan, generate.
+* Only folders that pass the completeness check can be generated; leftover shells are reported as
+  *Leftovers* and are refused.
+
+### 2.2 Steam is stuck in "verifying files" (…99 % → validation failed → back to 1 %, forever)
+
+Some downloads never finish: Steam reaches ~99 %, reports *file validation failed*, rolls back to an
+earlier state and starts over, again and again. That loop comes from `StateFlags` in the ACF: while the
+update/validation bits are set (typically `6 (UpdateRequired | FullyInstalled)`), Steam keeps verifying
+the same depot. Writing the state back to `4` (`FullyInstalled`) tells Steam the install is complete,
+which ends the loop.
+
+1. Close Steam.
+2. Start the tool — the game shows up as **⚠ Needs repair**, with `StateFlags` such as
+   `6 (UpdateRequired | FullyInstalled)`.
+3. Press **Repair / Generate Selected**. The folder is verified first (a ~99 % complete download
+   passes), the depot manifests that match the files on disk are kept, and the ACF is rewritten with
+   `StateFlags=4`, the measured `SizeOnDisk` and the current public `buildid`. The old ACF is kept as `.bak`.
+4. Start Steam — the game shows **Play**. If you ever suspect the content really is damaged, you can
+   still run "Verify integrity of game files" yourself, once, on your terms.
+
+Command line: `SteamACFManager.exe repair <appid>` (add `--dry-run` to see the ACF before writing it)
+
+Notes and honest limits:
+
+* `StateFlags=4` is written **only when the folder passes the content check** (≥ 90 % of the expected
+  full size). If the download really only has, say, 10 % on disk, the repair is refused — claiming
+  "fully installed" there would just make Steam re-download everything.
+* It only fixes Steam's own bookkeeping (state flags / depot manifests) for an install you already
+  have; it does not bypass ownership, DRM or Steam's licence checks, and it never modifies game files.
+* Steam owns the ACF and rewrites it while running, so always close Steam before repairing or
+  generating, and restart it afterwards.
+
+---
+
+## 3. Status model
 
 | Status | Meaning | Actionable |
 |---|---|---|
@@ -52,7 +111,7 @@ Generating an ACF for those makes Steam believe the game is installed and downlo
 
 ---
 
-## 3. Where the facts come from
+## 4. Where the facts come from
 
 `Steam\appcache\appinfo.vdf` (format version `0x07564429`) is parsed offline and gives, per AppID:
 
@@ -75,7 +134,7 @@ Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build onl
 
 ---
 
-## 4. What repair / generate actually write
+## 5. What repair / generate actually write
 
 **Repair (ACF present, damaged)**
 
@@ -103,13 +162,13 @@ Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build onl
 
 ---
 
-## 5. StateFlags column
+## 6. StateFlags column
 
 `StateFlags` is a bit mask. The grid shows the number followed by the set bits in English:
 
 ```
 4  (FullyInstalled)                          -> Steam shows "Play"
-6  (UpdateRequired | FullyInstalled)         -> installed, update pending
+6  (UpdateRequired | FullyInstalled)         -> installed, update pending  (the state behind the 99% loop)
 2  (UpdateRequired)                          -> needs an update/download
 1024 / 1048576 (UpdateStarted / Downloading) -> downloading right now
 ```
@@ -133,7 +192,7 @@ The column auto-sizes to its content (`AllCells` + a measured minimum width) so 
 
 ---
 
-## 6. Languages
+## 7. Languages
 
 English (default), 简体中文, 繁體中文, 日本語, 한국어, Español, Deutsch, Русский.
 
@@ -144,7 +203,7 @@ so adding a language is a matter of adding one column in `Localization.cs`.
 
 ---
 
-## 7. Requirements & build
+## 8. Requirements & build
 
 Windows, .NET Framework 4.5 or newer (nothing else — the in-box `csc.exe` is enough).
 
@@ -165,7 +224,7 @@ csc /codepage:65001 /target:winexe ^
 
 > The `.cmd` files must stay **GBK + CRLF** encoded, otherwise `cmd.exe` mis-parses the Chinese text.
 
-## 8. Command line
+## 9. Command line
 
 ```
 SteamACFManager.exe scan                                       list every entry with its verdict
@@ -182,7 +241,7 @@ Environment variables:
 | `STEAM_ACF_LANG` | force a UI language, e.g. `zh-CN` |
 | `STEAM_ACF_EXPORT_DIR` | where export copies go (default: `export\` next to the exe) |
 
-## 9. Tests
+## 10. Tests
 
 ```
 tests\run-tests.cmd
@@ -194,7 +253,7 @@ complete-but-no-ACF, duplicate install, wrong AppID, damaged ACF repair, generat
 StateFlags rendering, English default and "no missing translations" for all 8 languages.
 The real Steam library is never touched (`STEAM_ACF_ROOT` isolates everything).
 
-## 10. Project layout
+## 11. Project layout
 
 ```
 Localization.cs          8-language string table, StateFlags decoding, language persistence
@@ -221,6 +280,29 @@ SteamACFManagerCLI.exe   prebuilt console build
 的 ACF** 时，才判定为「缺 ACF」。判定依据是 Steam 自己的本地缓存 `appcache/appinfo.vdf`（完全离线）：
 里面有 `installdir`、当前 public 分支的 `buildid`、每个 depot 的 manifest GID / 体积 / 平台 / 语言 /
 DLC / 共享标记。拿不到体积基准时不会乱猜，而是列为「未验证」。
+
+### 两个典型使用场景
+
+**① 迁移了游戏文件夹，却忘了迁移 ACF**
+把 `steamapps\common\<游戏>` 复制/搬到别的盘或别的库之后，Steam 只认 ACF 文件，不认光秃秃的目录，
+于是显示未安装、甚至要重新下载。处理方法：**关掉 Steam → 打开本工具**，该目录会显示为
+**⚠ 缺 ACF（文件完整）→ 选中后点「修复/生成选中项」**，工具会把 ACF 写进那个库的 `steamapps` 目录，
+`buildid` 与每个 depot 的 manifest 都取自 Steam 当前 public 版本，因此 Steam 会直接接受已存在的文件，
+不会重新下载。命令行：`SteamACFManager.exe generate "<文件夹名>"`。
+注意：如果**旧的库还留着一个过期的 ACF**（游戏目录已经不在了），工具会拒绝生成并提示你先删掉那个陈旧
+ACF——否则 Steam 会认为是两份安装；删掉后重新扫描再生成即可。
+
+**② Steam 卡在「正在验证文件」：下到 99% → 提示文件验证失败 → 跳回前面，无限循环**
+这种循环来自 ACF 里的 `StateFlags`：带着更新/验证位（通常是 `6 (UpdateRequired | FullyInstalled)`）时，
+Steam 会反复验证同一个 depot。把状态改回 `4`（FullyInstalled，也就是显示「开始游戏」的状态）即可结束循环。
+处理方法：**关掉 Steam → 打开本工具**，该游戏显示为 **⚠ 需修复**（StateFlags 列会写着
+`6 (UpdateRequired | FullyInstalled)`）→ **选中后点「修复/生成选中项」**：工具先校验目录（约 99% 的
+下载能通过），保留与磁盘文件相符的 depot manifest，并写入 `StateFlags=4`、实测 `SizeOnDisk` 与当前
+public `buildid`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示「开始游戏」。命令行：
+`SteamACFManager.exe repair <appid>`（加 `--dry-run` 可先预览不写入）。
+注意：只有目录内容通过校验（≥ 预期完整体积的 90%）时才会写 `StateFlags=4`；如果盘上其实只有 10%，
+工具会拒绝——那样写「已安装」只会让 Steam 重新下载整包。它只修 Steam 自己的登记信息，
+不绕过所有权/DRM，也不修改任何游戏文件。
 
 界面默认英文，可在「重新扫描」左边的下拉框切换 8 种语言；`StateFlags` 列显示为
 `4 (FullyInstalled)`、`6 (UpdateRequired | FullyInstalled)` 这种「数字 + 英文含义」形式，列宽自适应不会截断。
