@@ -5,8 +5,20 @@ A small Windows tool that scans, verifies, repairs and generates Steam's
 
 * GUI (WinForms) + command line in one executable
 * 8 UI languages, **English by default** (switch it right next to the *Rescan* button)
-* `StateFlags` is shown as a number **plus its English meaning**, e.g. `4 (FullyInstalled)`
+* `StateFlags` is shown as a number **plus its meaning in the selected language**, e.g. `4 (FullyInstalled)` / `4 (已完整安装)`
 * Runs fully offline: it reads Steam's own metadata cache (`appcache/appinfo.vdf`)
+
+### Screenshots
+
+English (default): leftover folders and the empty folder are greyed out, only verifiable items stay coloured.
+
+![English UI](docs/screenshot-en.png)
+
+简体中文: the same window after switching the language — the StateFlags column and every note follow it.
+
+![中文界面](docs/screenshot-zh-CN.png)
+
+*(Rendered from the real UI code against a synthetic Steam library, so no personal game list is published.)*
 
 ---
 
