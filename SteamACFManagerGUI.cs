@@ -53,7 +53,27 @@ namespace SteamACFManager
         public List<KeyValuePair<string, string>> SharedDepots = new List<KeyValuePair<string, string>>();
         public List<KeyValuePair<string, string>> InstallScripts = new List<KeyValuePair<string, string>>();
         public AcfStatus Status = AcfStatus.MissingAcf;
-        public string DamageReason = "";
+
+        /// <summary>说明栏的“零件”。保存零件而不是拼好的字符串，切换界面语言时说明才能跟着变。</summary>
+        public List<ReasonPiece> ReasonParts = new List<ReasonPiece>();
+
+        public void SetReason(string key, params object[] args)
+        {
+            ReasonParts.Clear();
+            ReasonParts.Add(ReasonPiece.Of(key, args));
+        }
+        public void AddReason(string key, params object[] args)
+        {
+            ReasonParts.Add(ReasonPiece.Of(key, args));
+        }
+        public void AddReasonCheck(ContentCheck check)
+        {
+            ReasonParts.Add(ReasonPiece.OfCheck(check));
+        }
+
+        /// <summary>说明文字：每次访问都按当前界面语言重新渲染。</summary>
+        public string DamageReason { get { return ReasonRenderer.Render(ReasonParts); } }
+
         public bool FullyInstalled { get { return (StateFlags & 4) != 0; } }
 
         // 孤儿目录（无 ACF）专用：内容校验结果与实测体积
@@ -61,7 +81,7 @@ namespace SteamACFManager
         public long ActualBytes = 0;
         public int FileCount = 0;
         public ContentCheck Check;
-        public string AppIdSource = "";
+        public string AppIdSourceKey = "";   // AppID 来源的词条键，渲染时取当前语言
 
         public bool Actionable
         {
@@ -320,29 +340,29 @@ namespace SteamACFManager
             if (a.Depots.Count == 0)
             {
                 a.Status = AcfStatus.Damaged;
-                a.DamageReason = Loc.T("classify.noDepots");
+                a.SetReason("classify.noDepots");
             }
             else if (!a.FullyInstalled)
             {
                 a.Status = AcfStatus.Damaged;
-                a.DamageReason = Loc.T("classify.noInstalledBit", a.StateFlags);
+                a.SetReason("classify.noInstalledBit", a.StateFlags);
             }
             else if (a.SizeOnDisk <= 0)
             {
                 a.Status = AcfStatus.Damaged;
-                a.DamageReason = Loc.T("classify.sizeZero");
+                a.SetReason("classify.sizeZero");
             }
             else if (a.BuildId <= 0)
             {
                 a.Status = AcfStatus.Damaged;
-                a.DamageReason = Loc.T("classify.buildZero");
+                a.SetReason("classify.buildZero");
             }
             else
             {
                 a.Status = AcfStatus.InstalledOk;
                 // StateFlags 含位 2 表示 Steam 认为有可用更新（例如 6 = 已安装 + 需要更新）
                 if ((a.StateFlags & 2) != 0)
-                    a.DamageReason = Loc.T("classify.needsUpdate", a.StateFlags);
+                    a.SetReason("classify.needsUpdate", a.StateFlags);
             }
         }
 
@@ -471,7 +491,7 @@ namespace SteamACFManager
                         a.Name = Path.GetFileName(f);
                         a.Library = lib;
                         a.Status = AcfStatus.Damaged;
-                        a.DamageReason = Loc.T("classify.parseError", ex.Message);
+                        a.SetReason("classify.parseError", ex.Message);
                         result.Add(a);
                     }
                 }
@@ -541,27 +561,27 @@ namespace SteamACFManager
             // 1) 确定 AppID：steam_appid.txt → 本地缓存 installdir/名称 索引 → 其它库同名 installdir 的 ACF
             AcfInfo tpl = null;
             orphan.AppId = ReadSteamAppIdFile(dir);
-            if (!string.IsNullOrEmpty(orphan.AppId)) orphan.AppIdSource = Loc.T("appid.from.appidtxt");
+            if (!string.IsNullOrEmpty(orphan.AppId)) orphan.AppIdSourceKey = "appid.from.appidtxt";
             if (string.IsNullOrEmpty(orphan.AppId))
             {
                 string id = AppInfoCache.FindAppIdByInstallDir(folderName);
-                if (!string.IsNullOrEmpty(id)) { orphan.AppId = id; orphan.AppIdSource = Loc.T("appid.from.installdir"); }
+                if (!string.IsNullOrEmpty(id)) { orphan.AppId = id; orphan.AppIdSourceKey = "appid.from.installdir"; }
             }
             if (string.IsNullOrEmpty(orphan.AppId))
             {
                 string id = AppInfoCache.FindAppIdByName(folderName);
-                if (!string.IsNullOrEmpty(id)) { orphan.AppId = id; orphan.AppIdSource = Loc.T("appid.from.name"); }
+                if (!string.IsNullOrEmpty(id)) { orphan.AppId = id; orphan.AppIdSourceKey = "appid.from.name"; }
             }
             if (string.IsNullOrEmpty(orphan.AppId))
             {
                 string id = AppInfoCache.FindAppIdByLooseName(folderName);
-                if (!string.IsNullOrEmpty(id)) { orphan.AppId = id; orphan.AppIdSource = Loc.T("appid.from.loose"); }
+                if (!string.IsNullOrEmpty(id)) { orphan.AppId = id; orphan.AppIdSourceKey = "appid.from.loose"; }
             }
             if (string.IsNullOrEmpty(orphan.AppId) && acfByInstallDir.TryGetValue(folderName, out tpl)
                 && tpl != null && !string.IsNullOrEmpty(tpl.AppId))
             {
                 orphan.AppId = tpl.AppId;
-                orphan.AppIdSource = Loc.T("appid.from.otheracf");
+                orphan.AppIdSourceKey = "appid.from.otheracf";
             }
 
             // 2) 元数据与“完整体积”基准
@@ -575,12 +595,12 @@ namespace SteamACFManager
             if (tpl != null && tpl.SizeOnDisk > 0)
             {
                 reference = tpl.SizeOnDisk;
-                referenceSource = Loc.T("src.templateAcf");
+                referenceSource = "src.templateAcf";
             }
             else if (sameAppAcf != null && sameAppAcf.SizeOnDisk > 0)
             {
                 reference = sameAppAcf.SizeOnDisk;
-                referenceSource = Loc.T("src.templateAcf");
+                referenceSource = "src.templateAcf";
             }
 
             // 3) 量体积并校验内容
@@ -590,10 +610,7 @@ namespace SteamACFManager
             orphan.FileCount = chk.FileCount;
             orphan.SizeOnDisk = chk.ActualBytes;   // 让界面显示真实目录体积，而不是固定 0
 
-            string appIdNote = string.IsNullOrEmpty(orphan.AppId)
-                ? Loc.T("appid.unknown")
-                : Loc.T("appid.suffix", orphan.AppId, orphan.AppIdSource);
-
+            // 说明栏分几段存起来，渲染时才翻译（否则切换语言时这一列不会跟着变）
             AcfInfo installedElsewhere = null;
             if (!string.IsNullOrEmpty(orphan.AppId))
             {
@@ -605,17 +622,24 @@ namespace SteamACFManager
                     break;
                 }
             }
+            string appIdKey = string.IsNullOrEmpty(orphan.AppId) ? "appid.unknown" : "appid.suffix";
+            // 注意：来源这里放的是“零件”而不是译文，渲染时（含切换语言后）才会翻译
+            object[] appIdArgs = string.IsNullOrEmpty(orphan.AppId)
+                ? new object[0]
+                : new object[] { orphan.AppId, ReasonPiece.Of(orphan.AppIdSourceKey) };
 
             switch (chk.Verdict)
             {
                 case ContentVerdict.Empty:
                     orphan.Status = AcfStatus.EmptyFolder;
-                    orphan.DamageReason = chk.Reason + appIdNote;
+                    orphan.AddReasonCheck(chk);
+                    orphan.AddReason(appIdKey, appIdArgs);
                     break;
 
                 case ContentVerdict.Incomplete:
                     orphan.Status = AcfStatus.ResidueFolder;
-                    orphan.DamageReason = chk.Reason + appIdNote;
+                    orphan.AddReasonCheck(chk);
+                    orphan.AddReason(appIdKey, appIdArgs);
                     break;
 
                 case ContentVerdict.Complete:
@@ -624,21 +648,23 @@ namespace SteamACFManager
                         string otherFolder = Path.Combine(installedElsewhere.Library, "steamapps", "common", installedElsewhere.InstallDir);
                         bool otherStillHasFiles = Directory.Exists(otherFolder);
                         orphan.Status = AcfStatus.Unverified;
-                        orphan.DamageReason = (otherStillHasFiles
-                                ? Loc.T("reason.dupStillThere", installedElsewhere.Library)
-                                : Loc.T("reason.dupStale", installedElsewhere.Library))
-                            + appIdNote;
+                        orphan.AddReason(otherStillHasFiles ? "reason.dupStillThere" : "reason.dupStale", installedElsewhere.Library);
+                        orphan.AddReason(appIdKey, appIdArgs);
                     }
                     else
                     {
                         orphan.Status = AcfStatus.MissingAcf;
-                        orphan.DamageReason = chk.Reason + Loc.T("reason.onlyAcfMissing") + appIdNote;
+                        orphan.AddReasonCheck(chk);
+                        orphan.AddReason("reason.onlyAcfMissing");
+                        orphan.AddReason(appIdKey, appIdArgs);
                     }
                     break;
 
                 default:
                     orphan.Status = AcfStatus.Unverified;
-                    orphan.DamageReason = chk.Reason + appIdNote + Loc.T("reason.unverifiedHint");
+                    orphan.AddReasonCheck(chk);
+                    orphan.AddReason(appIdKey, appIdArgs);
+                    orphan.AddReason("reason.unverifiedHint");
                     break;
             }
             return orphan;
@@ -1109,7 +1135,7 @@ namespace SteamACFManager
 
             // 用目录内容校验决定 StateFlags：文件完整才敢写“已完整安装(4)”
             string folder = Path.Combine(acf.Library, "steamapps", "common", acf.InstallDir);
-            ContentCheck chk = ContentVerifier.Check(folder, meta, acf.SizeOnDisk, Loc.T("src.oldAcf"));
+            ContentCheck chk = ContentVerifier.Check(folder, meta, acf.SizeOnDisk, "src.oldAcf");
 
             if (chk.Verdict != ContentVerdict.Complete)
             {
@@ -1222,7 +1248,7 @@ namespace SteamACFManager
             AcfInfo tpl = FindAcfByInstallDir(orphan.InstallDir);
             long reference = tpl != null && tpl.SizeOnDisk > 0 ? tpl.SizeOnDisk : 0;
             ContentCheck chk = ContentVerifier.Check(orphan.Path, meta, reference,
-                reference > 0 ? Loc.T("src.templateAcf") : "");
+                reference > 0 ? "src.templateAcf" : "");
 
             string folder = orphan.Path;
             if (chk.Verdict == ContentVerdict.Empty)
@@ -1580,6 +1606,50 @@ namespace SteamACFManager
         }
 
         private bool scanning;
+
+        /// <summary>
+        /// 自检：模拟用户在下拉框里切换语言（只 SetLanguage + ApplyLanguage，**不重新扫描**），
+        /// 检查「说明」列与 StateFlags 列的文本是否都跟着变了。以前说明是在扫描时拼好的，
+        /// 切语言不会变，重启才会变——这个自检专门守住这个回归。
+        /// </summary>
+        public string SelfTestLiveLanguage()
+        {
+            string code0 = Loc.CurrentCode;
+            string other = code0 == "en" ? "zh-CN" : "en";
+            List<string> notesBefore = ColumnTextList("colNote");
+            List<string> flagsBefore = ColumnTextList("colFlags");
+            Loc.SetLanguage(other);
+            ApplyLanguage();                       // 用户点下拉框时的真实路径：重填表格
+            List<string> notesAfter = ColumnTextList("colNote");
+            List<string> flagsAfter = ColumnTextList("colFlags");
+            Loc.SetLanguage(code0);
+            ApplyLanguage();
+
+            string sampleBefore = "", sampleAfter = "";
+            int changedRows = 0;
+            for (int i = 0; i < notesBefore.Count && i < notesAfter.Count; i++)
+            {
+                if (notesBefore[i] == notesAfter[i]) continue;
+                changedRows++;
+                if (sampleBefore.Length == 0) { sampleBefore = notesBefore[i]; sampleAfter = notesAfter[i]; }
+            }
+            return "live-lang: from=" + code0 + " to=" + other
+                + " notesChangedRows=" + changedRows + "/" + notesBefore.Count
+                + " flagsChanged=" + (string.Join("|", flagsBefore.ToArray()) != string.Join("|", flagsAfter.ToArray()))
+                + " sampleBefore=\"" + sampleBefore + "\""
+                + " sampleAfter=\"" + sampleAfter + "\"";
+        }
+
+        private List<string> ColumnTextList(string column)
+        {
+            List<string> list = new List<string>();
+            foreach (DataGridViewRow r in grid.Rows)
+            {
+                string s = r.Cells[column].Value as string;
+                list.Add(s ?? "");
+            }
+            return list;
+        }
 
         private void Rescan()
         {
@@ -2027,6 +2097,8 @@ namespace SteamACFManager
                     Console.WriteLine("i18n: lang=" + Loc.CurrentCode + " keys=" + Loc.KeyCount
                         + " missing=" + missing.Count + " enc=" + Console.OutputEncoding.CodePage
                         + " was=" + Loc.ConsoleSwitchFrom + " flags=" + Loc.StateFlagsText(6));
+                    // 切换语言（不重新扫描）后，说明列是否也跟着变
+                    Console.WriteLine(f.SelfTestLiveLanguage());
                 }
                 return;
             }

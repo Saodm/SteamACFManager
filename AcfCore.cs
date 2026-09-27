@@ -98,11 +98,125 @@ namespace SteamACFManager
         public long ExpectedBytes = -1;
         public string ExpectedSource = "";
         public bool ExpectedIsLowerBound;
-        public string Reason = "";
+
+        /// <summary>体积基准来源的词条键（src.appinfo / src.templateAcf …）与参数，渲染时才取当前语言。</summary>
+        public string SourceKey = "";
+        public object[] SourceArgs = new object[0];
+
+        /// <summary>结论种类（empty / tiny / noBasis / incomplete / incompleteLower / lowerOnly / complete）。</summary>
+        public string ReasonKind = "";
 
         public bool Actionable { get { return Verdict == ContentVerdict.Complete; } }
 
         public string ActualText { get { return AcfFormat.Bytes(ActualBytes); } }
+
+        /// <summary>基准来源文字（按当前语言）。</summary>
+        public string SourceText
+        {
+            get { return string.IsNullOrEmpty(SourceKey) ? "" : Loc.T(SourceKey, SourceArgs); }
+        }
+
+        /// <summary>
+        /// 说明文字。注意这是“每次访问都按当前语言重新渲染”的属性：
+        /// 旧实现把它在扫描时拼好存起来，导致切换语言后说明栏仍是旧语言。
+        /// </summary>
+        public string Reason
+        {
+            get
+            {
+                switch (ReasonKind)
+                {
+                    case "empty": return Loc.T("reason.empty");
+                    case "tiny": return Loc.T("reason.tiny", AcfFormat.Bytes(ActualBytes), FileCount);
+                    case "noBasis": return Loc.T("reason.noBasis");
+                    case "incomplete": return Loc.T("reason.incomplete", NumbersText);
+                    case "incompleteLower": return Loc.T("reason.incompleteLower", NumbersText);
+                    case "lowerOnly": return Loc.T("reason.lowerOnly", NumbersText);
+                    case "complete":
+                        return Loc.T("reason.complete", NumbersText)
+                            + (ActualBytes > ExpectedBytes * 1.5 ? Loc.T("reason.completeNoisy") : "");
+                    default: return "";
+                }
+            }
+        }
+
+        private string NumbersText
+        {
+            get
+            {
+                return Loc.T("reason.numbers", AcfFormat.Bytes(ActualBytes), AcfFormat.Bytes(ExpectedBytes),
+                    AcfFormat.Percent(ActualBytes, ExpectedBytes), SourceText);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 说明栏里的一段内容：可以是一段词条（按当前语言渲染）、一段目录校验结果（延迟渲染），
+    /// 或一段固定文字。AcfInfo 保存的是这些“零件”而不是拼好的字符串，
+    /// 这样切换界面语言时整列说明都会跟着切换。
+    /// </summary>
+    internal sealed class ReasonPiece
+    {
+        public string Key;
+        public object[] Args;
+        public ContentCheck Check;
+        public string Literal;
+
+        public static ReasonPiece Of(string key, params object[] args)
+        {
+            ReasonPiece p = new ReasonPiece();
+            p.Key = key;
+            p.Args = args;
+            return p;
+        }
+
+        public static ReasonPiece OfCheck(ContentCheck check)
+        {
+            ReasonPiece p = new ReasonPiece();
+            p.Check = check;
+            return p;
+        }
+
+        public static ReasonPiece OfLiteral(string text)
+        {
+            ReasonPiece p = new ReasonPiece();
+            p.Literal = text;
+            return p;
+        }
+
+        public string Render()
+        {
+            if (Check != null) return Check.Reason;
+            if (!string.IsNullOrEmpty(Key)) return Loc.T(Key, Args);
+            return Literal ?? "";
+        }
+
+        /// <summary>
+        /// 让一段内容可以直接当作另一词条（"{0}"）的参数：string.Format 会调用 ToString()，
+        /// 这样嵌套进去的那一段也是“渲染时才翻译”，不会停留在扫描时的语言。
+        /// </summary>
+        public override string ToString()
+        {
+            return Render();
+        }
+    }
+
+    internal static class ReasonRenderer
+    {
+        /// <summary>把若干段拼成一行说明（空段自动跳过）。</summary>
+        public static string Render(List<ReasonPiece> parts)
+        {
+            if (parts == null || parts.Count == 0) return "";
+            StringBuilder sb = new StringBuilder();
+            foreach (ReasonPiece p in parts)
+            {
+                if (p == null) continue;
+                string s = p.Render();
+                if (string.IsNullOrEmpty(s)) continue;
+                sb.Append(s);
+            }
+            return sb.ToString();
+        }
     }
 
     internal static class AcfFormat
@@ -620,10 +734,13 @@ namespace SteamACFManager
 
         /// <summary>
         /// 校验目录内容是否构成“完整安装”。
-        /// referenceSize/referenceSource：优先使用的体积基准（例如同名 AppID 在别的库里的
+        /// referenceSize/referenceSourceKey：优先使用的体积基准（例如同名 AppID 在别的库里的
         /// ACF 中 Steam 自己记录的 SizeOnDisk），为空则用 appinfo 缓存推算。
+        /// 注意 referenceSourceKey 传的是词条键（如 src.templateAcf），不是已经翻译好的文字，
+        /// 这样说明栏在切换界面语言时才能跟着变。
         /// </summary>
-        public static ContentCheck Check(string folder, AppMeta meta, long referenceSize, string referenceSource)
+        public static ContentCheck Check(string folder, AppMeta meta, long referenceSize,
+            string referenceSourceKey, params object[] referenceSourceArgs)
         {
             ContentCheck r = new ContentCheck();
             FolderStats st = FolderProbe.Measure(folder);
@@ -633,7 +750,7 @@ namespace SteamACFManager
             if (st.Files == 0 || st.Bytes == 0)
             {
                 r.Verdict = ContentVerdict.Empty;
-                r.Reason = Loc.T("reason.empty");
+                r.ReasonKind = "empty";
                 return r;
             }
 
@@ -642,13 +759,14 @@ namespace SteamACFManager
             if (haveReference)
             {
                 r.ExpectedBytes = referenceSize;
-                r.ExpectedSource = referenceSource ?? "";
+                r.SourceKey = referenceSourceKey ?? "";
+                r.SourceArgs = referenceSourceArgs ?? new object[0];
                 r.ExpectedIsLowerBound = false;
             }
             else if (exp.AnyKnown && exp.Required > 0)
             {
                 r.ExpectedBytes = exp.Required;
-                r.ExpectedSource = Loc.T("src.appinfo");
+                r.SourceKey = "src.appinfo";
                 r.ExpectedIsLowerBound = exp.RequiredUnknown;
             }
 
@@ -659,16 +777,13 @@ namespace SteamACFManager
                 if (st.Bytes < MinPlausibleGameBytes)
                 {
                     r.Verdict = ContentVerdict.Incomplete;
-                    r.Reason = Loc.T("reason.tiny", AcfFormat.Bytes(st.Bytes), st.Files);
+                    r.ReasonKind = "tiny";
                     return r;
                 }
                 r.Verdict = ContentVerdict.Unverified;
-                r.Reason = Loc.T("reason.noBasis");
+                r.ReasonKind = "noBasis";
                 return r;
             }
-
-            string numbers = Loc.T("reason.numbers", AcfFormat.Bytes(st.Bytes), AcfFormat.Bytes(r.ExpectedBytes),
-                AcfFormat.Percent(st.Bytes, r.ExpectedBytes), r.ExpectedSource);
 
             if (r.ExpectedIsLowerBound)
             {
@@ -676,12 +791,12 @@ namespace SteamACFManager
                 if (st.Bytes < r.ExpectedBytes * CompleteRatio)
                 {
                     r.Verdict = ContentVerdict.Incomplete;
-                    r.Reason = Loc.T("reason.incompleteLower", numbers);
+                    r.ReasonKind = "incompleteLower";
                 }
                 else
                 {
                     r.Verdict = ContentVerdict.Unverified;
-                    r.Reason = Loc.T("reason.lowerOnly", numbers);
+                    r.ReasonKind = "lowerOnly";
                 }
                 return r;
             }
@@ -689,13 +804,12 @@ namespace SteamACFManager
             if (st.Bytes < r.ExpectedBytes * CompleteRatio)
             {
                 r.Verdict = ContentVerdict.Incomplete;
-                r.Reason = Loc.T("reason.incomplete", numbers);
+                r.ReasonKind = "incomplete";
                 return r;
             }
 
             r.Verdict = ContentVerdict.Complete;
-            r.Reason = Loc.T("reason.complete", numbers)
-                + (st.Bytes > r.ExpectedBytes * NoisyRatio ? Loc.T("reason.completeNoisy") : "");
+            r.ReasonKind = "complete";
             return r;
         }
     }

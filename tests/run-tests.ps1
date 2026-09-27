@@ -139,7 +139,15 @@ Write-Host "=== 9b. StateFlags 列带英文含义 + 多语言无缺译文 ==="
 Check 'StateFlags 带含义（中文模式：已完整安装）' ($scan -match '\(已完整安装\)') 'no localised flags'
 Check 'StateFlags 多位置位也可读（中文：需要更新 | 已完整安装）' ($scan -match '\(需要更新 \| 已完整安装\)') 'no multi-bit text'
 
-# 默认语言必须是英文（不设置 STEAM_ACF_LANG）
+# 默认语言必须是英文（不设置 STEAM_ACF_LANG；先把机器上已有的语言设置临时挪开，避免依赖用户环境）
+$settingsFile = Join-Path $env:APPDATA 'SteamACFManager\settings.ini'
+$settingsBackup = $settingsFile + '.test-backup'
+$settingsMoved = $false
+if (Test-Path $settingsFile) {
+  if (Test-Path $settingsBackup) { Remove-Item $settingsBackup -Force }
+  Move-Item $settingsFile $settingsBackup -Force
+  $settingsMoved = $true
+}
 $scanEn = RunExe $exe @('scan') $testRoot ""
 Check '默认语言为英文' (($scanEn -match 'Missing ACF|Installed') -and ($scanEn -notmatch '缺 ACF')) 'english default failed'
 Check '英文下 StateFlags 用官方标识符' ($scanEn -match '\(FullyInstalled\)') 'no english flags'
@@ -155,7 +163,6 @@ $flagExpect = @{
   'de'    = '(Vollständig installiert)'
   'ru'    = '(Полностью установлено)'
 }
-$settingsFile = Join-Path $env:APPDATA 'SteamACFManager\settings.ini'
 $settingsBefore = if (Test-Path $settingsFile) { Get-Content $settingsFile -Raw } else { '<none>' }
 foreach ($code in @('zh-CN','zh-TW','ja','ko','es','de','ru')) {
   $scanL = RunExe $exe @('scan') $testRoot $code
@@ -172,6 +179,19 @@ Check '启动/自检不会改写语言设置文件' ($settingsBefore -eq $settin
 
 $stBack = RunExe $exe @('gui-selftest') $testRoot 'zh-CN'
 Check '切换回中文仍然正常' ($stBack -match 'MainForm 构建成功') $stBack.Trim()
+
+Write-Host ""
+Write-Host "=== 9c. 切换语言时说明列必须立即跟着变（不需要重启） ==="
+$live1 = RunExe $exe @('gui-selftest') $testRoot 'en'
+$line1 = ($live1 -split "`r?`n" | Where-Object { $_ -match 'live-lang:' } | Select-Object -First 1)
+Check '英文→中文：说明列内容发生变化' ($line1 -match 'notesChangedRows=[1-9]') $line1
+Check '英文→中文：StateFlags 列内容发生变化' ($line1 -match 'flagsChanged=True') $line1
+Check '英文→中文：示例说明已变成中文' ($line1 -match 'sampleAfter="[^"]*[\u4e00-\u9fff]') $line1
+$live2 = RunExe $exe @('gui-selftest') $testRoot 'zh-CN'
+$line2 = ($live2 -split "`r?`n" | Where-Object { $_ -match 'live-lang:' } | Select-Object -First 1)
+Check '中文→英文：示例说明已不含中文' ($line2 -match 'sampleAfter="' -and $line2 -notmatch 'sampleAfter="[^"]*[\u4e00-\u9fff]') $line2
+Check '中文→英文：说明列内容发生变化' ($line2 -match 'notesChangedRows=[1-9]') $line2
+if ($settingsMoved) { Move-Item $settingsBackup $settingsFile -Force }   # 还原用户原有的语言设置
 
 Write-Host ""
 Write-Host "=== 10. 界面自检（构建窗体并填表，不显示窗口） ==="

@@ -268,7 +268,7 @@ tests\run-tests.cmd
 ```
 
 Builds a synthetic Steam root under `tests\steamrootA|B` (placeholder files created with
-`SetLength`, so they occupy no real space) and runs **61 assertions**: empty folder, leftover folders,
+`SetLength`, so they occupy no real space) and runs **66 assertions**: empty folder, leftover folders,
 complete-but-no-ACF, duplicate install, wrong AppID, damaged ACF repair, generated ACF re-scan,
 StateFlags rendering per language, English by default, "no missing translations" for all 8 languages,
 and that starting the tool never rewrites the language settings file.
@@ -282,7 +282,7 @@ AcfCore.cs               appinfo.vdf parser, folder probe, completeness verifier
 SteamACFManagerGUI.cs    GUI (WinForms) + its CLI commands
 SteamACFManager.cs       standalone console build
 build.cmd / build-cli.cmd
-tests\                   synthetic Steam root builder + regression suite (61 checks)
+tests\                   synthetic Steam root builder + regression suite (66 checks)
 SteamACFManager.exe      prebuilt GUI build
 SteamACFManagerCLI.exe   prebuilt console build
 LICENSE                  MIT
@@ -342,7 +342,7 @@ public `buildid`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示「开始
 修复会保留原 ACF 里描述「磁盘上这份内容」的 manifest（可能比缓存的当前版本旧），只在原值无效时才用缓存补；
 生成前必须先通过内容校验，否则一律拒绝并给出「实测 X / 预期 Y（百分比）」。操作前请关闭 Steam。
 
-编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（61 项断言全部通过）。
+编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（66 项断言全部通过）。
 
 ### 许可证
 

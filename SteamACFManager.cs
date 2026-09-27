@@ -474,7 +474,7 @@ namespace SteamACFManager
                 if (!string.IsNullOrEmpty(orphan.AppId) && a.AppId == orphan.AppId && a.SizeOnDisk > 0)
                 {
                     reference = a.SizeOnDisk;
-                    referenceSource = Loc.T("src.templateAcf");
+                    referenceSource = "src.templateAcf";
                     break;
                 }
             }
@@ -735,7 +735,7 @@ namespace SteamACFManager
                 return Loc.T("err.noBuildId", appid);
 
             string folder = GetGameFolder(acf);
-            ContentCheck chk = ContentVerifier.Check(folder, meta, acf.SizeOnDisk, Loc.T("src.oldAcf"));
+            ContentCheck chk = ContentVerifier.Check(folder, meta, acf.SizeOnDisk, "src.oldAcf");
             if (chk.Verdict != ContentVerdict.Complete)
                 return Loc.T("err.refuseRepair", chk.Reason, folder, "") + "\n"
                      + Loc.T("err.repairHint");
