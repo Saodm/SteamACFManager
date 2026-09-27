@@ -305,6 +305,22 @@ The real Steam library is never touched (`STEAM_ACF_ROOT` isolates everything).
 Per-check results are also written to `tests\out\results.txt` (UTF-8), which is easier to read than the
 console when the console code page cannot represent the current language.
 
+### 10.1 Testing use case 2 (the "99 % verification loop") on your own library
+
+`test-scenario2.cmd` runs that flow against **one real game of your choice** and can undo everything:
+
+```
+test-scenario2.cmd 413150            # read-only preview: current state + what repair would write
+test-scenario2.cmd 413150 break      # recreate use case 2: spoils only the ACF bookkeeping
+test-scenario2.cmd 413150 apply      # write the repair (Steam must be closed)
+test-scenario2.cmd 413150 rollback   # restore (uses .testbak, else the tool's .bak)
+```
+
+It refuses to run while Steam is up (Steam rewrites ACF files in the background), backs the original ACF
+up as `<acf>.testbak` before the first change, and never touches a game file — only
+`appmanifest_<AppID>.acf`. Pick a small complete game: after `break` Steam shows *update / verifying*,
+after `apply` it shows *Play* again.
+
 ## 11. Project layout
 
 ```
@@ -314,6 +330,7 @@ SteamACFManagerGUI.cs    GUI (WinForms) + its CLI commands
 SteamACFManager.cs       standalone console build
 build.cmd / build-cli.cmd
 tests\                   synthetic Steam root builder + regression suite (68 checks)
+test-scenario2.cmd/.ps1  on-demand use-case-2 test flow (break / preview / apply / rollback)
 SteamACFManager.exe      prebuilt GUI build
 SteamACFManagerCLI.exe   prebuilt console build
 LICENSE                  MIT
