@@ -21,12 +21,24 @@ function Check([string]$name, [bool]$ok, [string]$detail) {
   if ($ok) { $script:pass++; Write-Host ("  [通过] " + $name) -ForegroundColor Green }
   else { $script:fail++; Write-Host ("  [失败] " + $name + "  -> " + $detail) -ForegroundColor Red }
 }
-function RunExe([string]$exePath, [string[]]$arguments, [string]$rootPath) {
+function Decode-Output([byte[]]$bytes) {
+  # 工具在“当前控制台代码页表示不了”的语言下会输出 UTF-8，否则是 GBK；这里先试 UTF-8
+  $strict = New-Object System.Text.UTF8Encoding($false, $true)
+  try { return $strict.GetString($bytes) } catch { return [System.Text.Encoding]::GetEncoding(936).GetString($bytes) }
+}
+
+function RunExe([string]$exePath, [string[]]$arguments, [string]$rootPath, [string]$lang = "zh-CN") {
   $env:STEAM_ACF_ROOT = $rootPath
-  $env:STEAM_ACF_LANG = "zh-CN"   # 断言用固定语言，避免受默认语言变化影响
+  if ([string]::IsNullOrEmpty($lang)) { Remove-Item Env:\STEAM_ACF_LANG -ErrorAction SilentlyContinue }
+  else { $env:STEAM_ACF_LANG = $lang }
   $env:STEAM_ACF_EXPORT_DIR = Join-Path $outDir 'export'   # 测试的导出副本不要污染真实 export 目录
-  $text = & $exePath @arguments 2>&1 | Out-String
-  return $text
+  $tmp = Join-Path $outDir ('raw_' + [guid]::NewGuid().ToString('N') + '.txt')
+  $argline = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  cmd /c "`"$exePath`" $argline > `"$tmp`" 2>&1" | Out-Null
+  if (-not (Test-Path $tmp)) { return "" }
+  $bytes = [System.IO.File]::ReadAllBytes($tmp)
+  Remove-Item $tmp -Force
+  return (Decode-Output $bytes)
 }
 
 if (-not (Test-Path $exe)) { Write-Host "[错误] 找不到 $exe，请先运行 build.cmd" -ForegroundColor Red; exit 1 }
@@ -124,24 +136,41 @@ Check 'CLI 不把已有 ACF 的目录当成孤儿' (($cliScan -split "`n" | Wher
 
 Write-Host ""
 Write-Host "=== 9b. StateFlags 列带英文含义 + 多语言无缺译文 ==="
-Check 'StateFlags 带英文含义 (FullyInstalled)' ($scan -match '\(FullyInstalled\)') 'no "(FullyInstalled)"'
-Check 'StateFlags 多位置位也可读' ($scan -match '\(UpdateRequired \| FullyInstalled\)') 'no multi-bit text'
-$env:STEAM_ACF_ROOT = $testRoot
-$env:STEAM_ACF_LANG = ""
-Remove-Item Env:\STEAM_ACF_LANG -ErrorAction SilentlyContinue
-$env:STEAM_ACF_EXPORT_DIR = Join-Path $outDir 'export'
-$scanEn = & $exe scan 2>&1 | Out-String      # 不设置 STEAM_ACF_LANG，验证默认英文
+Check 'StateFlags 带含义（中文模式：已完整安装）' ($scan -match '\(已完整安装\)') 'no localised flags'
+Check 'StateFlags 多位置位也可读（中文：需要更新 | 已完整安装）' ($scan -match '\(需要更新 \| 已完整安装\)') 'no multi-bit text'
+
+# 默认语言必须是英文（不设置 STEAM_ACF_LANG）
+$scanEn = RunExe $exe @('scan') $testRoot ""
 Check '默认语言为英文' (($scanEn -match 'Missing ACF|Installed') -and ($scanEn -notmatch '缺 ACF')) 'english default failed'
-foreach ($code in @('zh-CN','zh-TW','ja','ko','es','de','ru')) {
-  $env:STEAM_ACF_LANG = $code
-  $stn = RunExe $exe @('gui-selftest') $testRoot
-  $missing = -1
-  if ($stn -match '缺译文=(\d+)') { $missing = [int]$Matches[1] }
-  elseif ($stn -match 'missing translations=(\d+)') { $missing = [int]$Matches[1] }
-  Check ("语言 $code 无缺译文") ($missing -eq 0) ("missing=" + $missing)
+Check '英文下 StateFlags 用官方标识符' ($scanEn -match '\(FullyInstalled\)') 'no english flags'
+
+# 逐语言真的切换一次：文案（状态名 + StateFlags 含义）都要跟着变，且无缺译文
+$flagExpect = @{
+  'en'    = '(FullyInstalled)'
+  'zh-CN' = '(已完整安装)'
+  'zh-TW' = '(已完整安裝)'
+  'ja'    = '(完全インストール済み)'
+  'ko'    = '(완전 설치됨)'
+  'es'    = '(Instalado por completo)'
+  'de'    = '(Vollständig installiert)'
+  'ru'    = '(Полностью установлено)'
 }
-$env:STEAM_ACF_LANG = "zh-CN"
-$stBack = RunExe $exe @('gui-selftest') $testRoot
+$settingsFile = Join-Path $env:APPDATA 'SteamACFManager\settings.ini'
+$settingsBefore = if (Test-Path $settingsFile) { Get-Content $settingsFile -Raw } else { '<none>' }
+foreach ($code in @('zh-CN','zh-TW','ja','ko','es','de','ru')) {
+  $scanL = RunExe $exe @('scan') $testRoot $code
+  Check ("语言 $code 的 StateFlags 文案已本地化") ($scanL -match [regex]::Escape($flagExpect[$code])) (($scanL -split "`n" | Where-Object { $_ -match '\d+ \(' } | Select-Object -First 1))
+  $stn = RunExe $exe @('gui-selftest') $testRoot $code
+  $info = ($stn -split "`r?`n" | Where-Object { $_ -match '^i18n:' } | Select-Object -First 1)
+  $missing = -1
+  if ($info -match 'missing=(\d+)') { $missing = [int]$Matches[1] }
+  Check ("语言 $code 无缺译文") ($missing -eq 0) ($info + "  (lang=" + $code + ")")
+  Check ("语言 $code 的 i18n 行语言正确") ($info -match ("lang=" + [regex]::Escape($code) + " ")) $info
+}
+$settingsAfter = if (Test-Path $settingsFile) { Get-Content $settingsFile -Raw } else { '<none>' }
+Check '启动/自检不会改写语言设置文件' ($settingsBefore -eq $settingsAfter) ("before=" + $settingsBefore.Trim() + " after=" + $settingsAfter.Trim())
+
+$stBack = RunExe $exe @('gui-selftest') $testRoot 'zh-CN'
 Check '切换回中文仍然正常' ($stBack -match 'MainForm 构建成功') $stBack.Trim()
 
 Write-Host ""

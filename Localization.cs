@@ -42,69 +42,113 @@ namespace SteamACFManager
         public static string CurrentCode { get { return Languages[current].Code; } }
         public static string CurrentNativeName { get { return Languages[current].NativeName; } }
 
-        /// <summary>StateFlags 位含义（Steam 自己的标识符，始终用英文）</summary>
-        private static readonly KeyValuePair<long, string>[] FlagBits = new KeyValuePair<long, string>[]
+        /// <summary>StateFlags 的位（顺序即显示顺序）。每个位的含义文字是多语言词条 sf.&lt;位&gt;，会跟随界面语言。</summary>
+        private static readonly long[] FlagOrder = new long[]
         {
-            new KeyValuePair<long, string>(1L, "Uninstalled"),
-            new KeyValuePair<long, string>(2L, "UpdateRequired"),
-            new KeyValuePair<long, string>(4L, "FullyInstalled"),
-            new KeyValuePair<long, string>(8L, "UpdateQueued"),
-            new KeyValuePair<long, string>(16L, "UpdateOptional"),
-            new KeyValuePair<long, string>(32L, "FilesMissing"),
-            new KeyValuePair<long, string>(64L, "SharedOnly"),
-            new KeyValuePair<long, string>(128L, "FilesCorrupt"),
-            new KeyValuePair<long, string>(256L, "UpdateRunning"),
-            new KeyValuePair<long, string>(512L, "UpdatePaused"),
-            new KeyValuePair<long, string>(1024L, "UpdateStarted"),
-            new KeyValuePair<long, string>(2048L, "Uninstalling"),
-            new KeyValuePair<long, string>(4096L, "BackupRunning"),
-            new KeyValuePair<long, string>(65536L, "Reconfiguring"),
-            new KeyValuePair<long, string>(131072L, "Validating"),
-            new KeyValuePair<long, string>(262144L, "AddingFiles"),
-            new KeyValuePair<long, string>(524288L, "Preallocating"),
-            new KeyValuePair<long, string>(1048576L, "Downloading"),
-            new KeyValuePair<long, string>(2097152L, "Staging"),
-            new KeyValuePair<long, string>(4194304L, "Committing"),
-            new KeyValuePair<long, string>(8388608L, "UpdateStopping")
+            1L, 2L, 4L, 8L, 16L, 32L, 64L, 128L, 256L, 512L, 1024L,
+            2048L, 4096L, 65536L, 131072L, 262144L, 524288L, 1048576L, 2097152L, 4194304L, 8388608L
         };
 
-        /// <summary>把 StateFlags 数字翻译成 “数字 (英文含义)”，例如 4 (FullyInstalled)、6 (UpdateRequired | FullyInstalled)。</summary>
+        /// <summary>与 FlagOrder 一一对应的 Steam 官方英文标识符（提示气泡里作为对照保留）。</summary>
+        private static readonly string[] FlagCanonical = new string[]
+        {
+            "Uninstalled", "UpdateRequired", "FullyInstalled", "UpdateQueued", "UpdateOptional",
+            "FilesMissing", "SharedOnly", "FilesCorrupt", "UpdateRunning", "UpdatePaused", "UpdateStarted",
+            "Uninstalling", "BackupRunning", "Reconfiguring", "Validating", "AddingFiles", "Preallocating",
+            "Downloading", "Staging", "Committing", "UpdateStopping"
+        };
+
+        /// <summary>某个状态位的含义（按当前界面语言）。</summary>
+        public static string FlagName(long bit)
+        {
+            return T("sf." + bit);
+        }
+
+        /// <summary>把 StateFlags 数字翻译成 “数字 (含义)”，含义跟随界面语言，例如：
+        /// 英文 4 (FullyInstalled)；中文 4 (已完整安装)；中文 6 (需要更新 | 已完整安装)。</summary>
         public static string StateFlagsText(long flags)
         {
-            if (flags == 0) return "0 (NoFlags)";
+            if (flags == 0) return "0 (" + T("sf.none") + ")";
             StringBuilder sb = new StringBuilder();
-            foreach (KeyValuePair<long, string> kv in FlagBits)
+            foreach (long bit in FlagOrder)
             {
-                if ((flags & kv.Key) == 0) continue;
+                if ((flags & bit) == 0) continue;
                 if (sb.Length > 0) sb.Append(" | ");
-                sb.Append(kv.Value);
+                sb.Append(FlagName(bit));
             }
-            if (sb.Length == 0) return flags + " (Unknown)";
             long known = 0;
-            foreach (KeyValuePair<long, string> kv in FlagBits) known |= kv.Key;
+            foreach (long bit in FlagOrder) known |= bit;
             long rest = flags & ~known;
-            if (rest != 0) sb.Append(" | ?" + rest);
+            if (rest != 0)
+            {
+                if (sb.Length > 0) sb.Append(" | ");
+                sb.Append("?" + rest);
+            }
+            if (sb.Length == 0) sb.Length += 0;   // 理论上不会发生
             return flags + " (" + sb + ")";
         }
 
-        /// <summary>位含义表格（供提示气泡使用，标识符保持英文）。</summary>
+        /// <summary>位含义对照表（提示气泡）：左边是 Steam 官方标识符，右边是当前语言的含义。</summary>
         public static string StateFlagsLegend()
         {
+            StringBuilder[] rows = new StringBuilder[FlagOrder.Length];
+            int width = 0;
+            for (int i = 0; i < FlagOrder.Length; i++)
+            {
+                string localized = FlagName(FlagOrder[i]);
+                string label = localized == FlagCanonical[i] ? FlagCanonical[i] : FlagCanonical[i] + "/" + localized;
+                rows[i] = new StringBuilder(FlagOrder[i] + "=" + label);
+                if (rows[i].Length > width) width = rows[i].Length;
+            }
             StringBuilder sb = new StringBuilder();
             sb.Append(T("tip.stateflags.intro"));
             sb.AppendLine();
             sb.AppendLine();
-            int i = 0;
-            foreach (KeyValuePair<long, string> kv in FlagBits)
+            for (int i = 0; i < rows.Length; i++)
             {
-                sb.Append(kv.Key + "=" + kv.Value);
-                i++;
-                if (i % 4 == 0) sb.AppendLine(); else sb.Append("   ");
+                sb.Append(rows[i].ToString().PadRight(width + 3));
+                if (i % 2 == 1) sb.AppendLine();
             }
-            sb.AppendLine();
+            if (rows.Length % 2 == 1) sb.AppendLine();
             sb.Append(T("tip.stateflags.footer"));
             return sb.ToString();
         }
+
+        /// <summary>
+        /// 命令行模式下确保控制台能显示当前语言：如果所选语言的字符在当前控制台代码页里
+        /// 表示不了（例如 GBK 控制台下的韩文谚文），就切到 UTF-8，避免输出变成一堆 “?”。
+        /// </summary>
+        public static void EnsureConsoleEncoding()
+        {
+            try
+            {
+                Encoding cur = Console.OutputEncoding;
+                string sample = T("st.cli.installed") + T("col.status") + T("col.note")
+                    + StateFlagsText(6) + T("ui.cacheOk", 1);
+                ConsoleSwitchFrom = cur.CodePage;
+                if (cur.GetString(cur.GetBytes(sample)) == sample) return;   // 能完整表示就不用动
+                UTF8Encoding utf8 = new UTF8Encoding(false);
+                try
+                {
+                    Console.OutputEncoding = utf8;   // 有控制台时同时把代码页切到 65001
+                }
+                catch
+                {
+                    // 没有控制台句柄（输出被重定向到文件/管道）时，直接换掉输出流的编码
+                    try
+                    {
+                        StreamWriter w = new StreamWriter(Console.OpenStandardOutput(), utf8);
+                        w.AutoFlush = true;
+                        Console.SetOut(w);
+                    }
+                    catch { }
+                }
+            }
+            catch { }   // GUI 直接启动等没有控制台的情况，忽略
+        }
+
+        /// <summary>自动切换控制台编码前用的代码页（0 = 未切换），仅供自检诊断。</summary>
+        public static int ConsoleSwitchFrom = 0;
 
         private static bool initialized;
 
@@ -266,6 +310,30 @@ namespace SteamACFManager
                 "Valores habituales: 4 = instalado (Jugar), 6 = instalado con actualización pendiente, 2 = requiere actualización, 1024/1048576 = descargando.",
                 "Häufige Werte: 4 = installiert (Play), 6 = installiert, Update ausstehend, 2 = Update nötig, 1024/1048576 = wird geladen.",
                 "Типичные значения: 4 — установлено («Играть»), 6 — установлено, ждёт обновления, 2 — нужно обновление, 1024/1048576 — загрузка.");
+
+            // ---- StateFlags 各个位的含义（跟随界面语言；英文列即 Steam 官方标识符）----
+            Add("sf.none", "NoFlags", "无状态位", "無狀態位", "フラグなし", "플래그 없음", "Sin flags", "Keine Flags", "Нет флагов");
+            Add("sf.1", "Uninstalled", "未安装", "未安裝", "未インストール", "설치 안 됨", "No instalado", "Nicht installiert", "Не установлено");
+            Add("sf.2", "UpdateRequired", "需要更新", "需要更新", "更新が必要", "업데이트 필요", "Requiere actualización", "Update erforderlich", "Требуется обновление");
+            Add("sf.4", "FullyInstalled", "已完整安装", "已完整安裝", "完全インストール済み", "완전 설치됨", "Instalado por completo", "Vollständig installiert", "Полностью установлено");
+            Add("sf.8", "UpdateQueued", "更新已排队", "更新已排入佇列", "更新待ち", "업데이트 대기열", "Actualización en cola", "Update in Warteschlange", "Обновление в очереди");
+            Add("sf.16", "UpdateOptional", "可选更新", "選擇性更新", "任意更新", "선택적 업데이트", "Actualización opcional", "Optionales Update", "Необязательное обновление");
+            Add("sf.32", "FilesMissing", "文件缺失", "檔案缺失", "ファイル欠落", "파일 누락", "Faltan archivos", "Dateien fehlen", "Файлы отсутствуют");
+            Add("sf.64", "SharedOnly", "仅共享内容", "僅共用內容", "共有のみ", "공유 전용", "Solo compartido", "Nur gemeinsam genutzt", "Только общие файлы");
+            Add("sf.128", "FilesCorrupt", "文件损坏", "檔案損毀", "ファイル破損", "파일 손상", "Archivos dañados", "Dateien beschädigt", "Файлы повреждены");
+            Add("sf.256", "UpdateRunning", "正在更新", "正在更新", "更新中", "업데이트 진행 중", "Actualizando", "Update läuft", "Обновление выполняется");
+            Add("sf.512", "UpdatePaused", "更新已暂停", "更新已暫停", "更新一時停止", "업데이트 일시중지", "Actualización en pausa", "Update pausiert", "Обновление приостановлено");
+            Add("sf.1024", "UpdateStarted", "更新已开始", "更新已開始", "更新を開始", "업데이트 시작됨", "Actualización iniciada", "Update gestartet", "Обновление начато");
+            Add("sf.2048", "Uninstalling", "正在卸载", "正在解除安裝", "アンインストール中", "제거 중", "Desinstalando", "Wird deinstalliert", "Удаление");
+            Add("sf.4096", "BackupRunning", "正在备份", "正在備份", "バックアップ中", "백업 중", "Copia en curso", "Backup läuft", "Резервное копирование");
+            Add("sf.65536", "Reconfiguring", "正在重新配置", "正在重新設定", "再構成中", "재구성 중", "Reconfigurando", "Wird neu konfiguriert", "Перенастройка");
+            Add("sf.131072", "Validating", "正在验证文件", "正在驗證檔案", "検証中", "검증 중", "Verificando", "Wird überprüft", "Проверка");
+            Add("sf.262144", "AddingFiles", "正在添加文件", "正在新增檔案", "ファイルを追加中", "파일 추가 중", "Añadiendo archivos", "Dateien werden hinzugefügt", "Добавление файлов");
+            Add("sf.524288", "Preallocating", "正在预分配空间", "正在預先配置空間", "領域を事前確保中", "공간 사전 할당 중", "Preasignando espacio", "Speicher wird vorab belegt", "Предварительное выделение");
+            Add("sf.1048576", "Downloading", "正在下载", "正在下載", "ダウンロード中", "다운로드 중", "Descargando", "Wird geladen", "Загрузка");
+            Add("sf.2097152", "Staging", "正在写入磁盘", "正在寫入磁碟", "ステージング中", "스테이징 중", "Preparando en disco", "Wird bereitgestellt", "Размещение");
+            Add("sf.4194304", "Committing", "正在提交更新", "正在提交更新", "コミット中", "커밋 중", "Confirmando", "Wird übernommen", "Фиксация");
+            Add("sf.8388608", "UpdateStopping", "正在停止更新", "正在停止更新", "更新を停止中", "업데이트 중지 중", "Deteniendo actualización", "Update wird beendet", "Остановка обновления");
 
             // ---- 状态名称 ----
             Add("st.installed", "✅ Installed", "✅ 已安装", "✅ 已安裝", "✅ インストール済み", "✅ 설치됨", "✅ Instalado", "✅ Installiert", "✅ Установлено");

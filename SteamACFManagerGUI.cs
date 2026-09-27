@@ -158,6 +158,20 @@ namespace SteamACFManager
             }
         }
 
+        /// <summary>命令行输出用的状态名：纯 ASCII 标记，避免 emoji 在不支持的控制台里变成乱码。</summary>
+        public static string StatusTextCliOf(AcfStatus st)
+        {
+            switch (st)
+            {
+                case AcfStatus.InstalledOk: return Loc.T("st.cli.installed");
+                case AcfStatus.Damaged: return Loc.T("st.cli.damaged");
+                case AcfStatus.MissingAcf: return Loc.T("st.cli.missingAcf");
+                case AcfStatus.Unverified: return Loc.T("st.cli.unverified");
+                case AcfStatus.ResidueFolder: return Loc.T("st.cli.residue");
+                default: return Loc.T("st.cli.empty");
+            }
+        }
+
         public static void LoadLibraries()
         {
             libraries.Clear();
@@ -1389,7 +1403,8 @@ namespace SteamACFManager
             langCombo.FlatStyle = FlatStyle.System;
             langCombo.Margin = new Padding(0, 2, 6, 0);
             foreach (LanguageInfo li in Loc.Languages) langCombo.Items.Add(li.NativeName);
-            langCombo.SelectedIndex = Loc.IndexOf(Loc.CurrentCode);
+            // 注意：这里不设 SelectedIndex —— 交给 ApplyLanguage() 在“抑制变更”状态下设置，
+            // 否则控件初始化会被当成用户切换语言，把当前语言误写进 settings.ini。
             langCombo.SelectedIndexChanged += delegate
             {
                 if (switchingLanguage || langCombo.SelectedIndex < 0) return;
@@ -1646,9 +1661,17 @@ namespace SteamACFManager
                         break;
                 }
             }
-            // 保证 StateFlags 列足够宽，不会把 “6 (UpdateRequired | FullyInstalled)” 截断
-            int need = TextRenderer.MeasureText("88888888 (UpdateRequired | FullyInstalled)", grid.Font).Width + 24;
-            grid.Columns["colFlags"].MinimumWidth = Math.Max(170, need);
+            // 保证 StateFlags 列足够宽：按“当前语言下实际显示的文本”实测宽度（中文等全角字符比英文宽），
+            // 这样切到任何语言都不会把 “6 (需要更新 | 已完整安装)” 之类截断。
+            int need = TextRenderer.MeasureText("88888888 (" + Loc.T("col.stateflags") + ")", grid.Font).Width + 28;
+            foreach (DataGridViewRow r in grid.Rows)
+            {
+                string cellText = r.Cells["colFlags"].Value as string;
+                if (string.IsNullOrEmpty(cellText)) continue;
+                int w = TextRenderer.MeasureText(cellText, grid.Font).Width + 22;
+                if (w > need) need = w;
+            }
+            grid.Columns["colFlags"].MinimumWidth = Math.Max(150, need);
         }
 
         private string FormatSize(long bytes)
@@ -1928,6 +1951,7 @@ namespace SteamACFManager
 
             if (cmd == "scan")
             {
+                Loc.EnsureConsoleEncoding();
                 Console.WriteLine(Loc.T("cli.steamFolder", Core.steamPath));
                 Console.WriteLine(Core.AppInfoCacheStatus);
                 List<AcfInfo> list = Core.ScanGames();
@@ -1937,7 +1961,7 @@ namespace SteamACFManager
                 {
                     bool hasAcf = g.Folder.Length == 0;   // 孤儿目录没有 ACF，不显示 StateFlags/buildid
                     Console.WriteLine(string.Format("{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}",
-                        Core.StatusTextOf(g.Status), g.AppId, g.Name, Path.GetFileName(g.Library),
+                        Core.StatusTextCliOf(g.Status), g.AppId, g.Name, Path.GetFileName(g.Library),
                         hasAcf ? Loc.StateFlagsText(g.StateFlags) : "",
                         g.SizeOnDisk > 0 ? AcfFormat.Bytes(g.SizeOnDisk) : "", g.DamageReason));
                 }
@@ -1985,9 +2009,14 @@ namespace SteamACFManager
                     Console.WriteLine(Loc.T("selftest.form", rows, list.Count));
                     int rows2 = f.SelfTestAsync(60000);
                     Console.WriteLine(Loc.T("selftest.async", rows2));
+                    Loc.EnsureConsoleEncoding();
                     List<string> missing = Loc.MissingTranslations();
                     Console.WriteLine(Loc.T("selftest.lang", Loc.CurrentCode, Loc.KeyCount,
                         missing.Count == 0 ? "0" : string.Join(",", missing.ToArray())));
+                    // 纯 ASCII 摘要行，便于脚本断言（不受控制台代码页影响）
+                    Console.WriteLine("i18n: lang=" + Loc.CurrentCode + " keys=" + Loc.KeyCount
+                        + " missing=" + missing.Count + " enc=" + Console.OutputEncoding.CodePage
+                        + " was=" + Loc.ConsoleSwitchFrom + " flags=" + Loc.StateFlagsText(6));
                 }
                 return;
             }

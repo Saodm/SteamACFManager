@@ -164,7 +164,19 @@ Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build onl
 
 ## 6. StateFlags column
 
-`StateFlags` is a bit mask. The grid shows the number followed by the set bits in English:
+`StateFlags` is a bit mask. The grid shows the number followed by the set bits, **written in the currently
+selected UI language** — switching the language in the drop-down also switches this explanation:
+
+| Language | How it reads |
+|---|---|
+| English (default) | `4 (FullyInstalled)` · `6 (UpdateRequired \| FullyInstalled)` |
+| 简体中文 | `4 (已完整安装)` · `6 (需要更新 \| 已完整安装)` |
+| 繁體中文 | `4 (已完整安裝)` · `6 (需要更新 \| 已完整安裝)` |
+| 日本語 | `4 (完全インストール済み)` · `6 (更新が必要 \| 完全インストール済み)` |
+| 한국어 | `4 (완전 설치됨)` · `6 (업데이트 필요 \| 완전 설치됨)` |
+| Español | `4 (Instalado por completo)` · `6 (Requiere actualización \| Instalado por completo)` |
+| Deutsch | `4 (Vollständig installiert)` · `6 (Update erforderlich \| Vollständig installiert)` |
+| Русский | `4 (Полностью установлено)` · `6 (Требуется обновление \| Полностью установлено)` |
 
 ```
 4  (FullyInstalled)                          -> Steam shows "Play"
@@ -173,7 +185,8 @@ Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build onl
 1024 / 1048576 (UpdateStarted / Downloading) -> downloading right now
 ```
 
-Full bit list (also available as a tooltip on the column header):
+Full bit list with Steam's official identifiers (the tooltip on the column header shows the same list,
+`bit=OfficialName/localised meaning`):
 
 | Bit | Name | Bit | Name |
 |---|---|---|---|
@@ -188,7 +201,7 @@ Full bit list (also available as a tooltip on the column header):
 | 256 | UpdateRunning | 4194304 | Committing |
 | 512 | UpdatePaused | 8388608 | UpdateStopping |
 
-The column auto-sizes to its content (`AllCells` + a measured minimum width) so the text is never clipped.
+The column auto-sizes to its content (measured per language, so wider CJK text is not clipped either).
 
 ---
 
@@ -197,9 +210,16 @@ The column auto-sizes to its content (`AllCells` + a measured minimum width) so 
 English (default), 简体中文, 繁體中文, 日本語, 한국어, Español, Deutsch, Русский.
 
 Pick one in the drop-down **immediately left of the "Rescan" button**; the choice is stored in
-`%APPDATA%\SteamACFManager\settings.ini` and restored on the next start. `STEAM_ACF_LANG=zh-CN`
-overrides it for one run (handy for scripts). The self-test reports how many translations are missing,
-so adding a language is a matter of adding one column in `Localization.cs`.
+`%APPDATA%\SteamACFManager\settings.ini` and restored on the next start (starting the tool never rewrites
+that file by itself — only an actual switch does). `STEAM_ACF_LANG=zh-CN` overrides it for one run (handy
+for scripts). Everything user-visible follows the selection: buttons, column headers, status names,
+per-entry notes, dialogs **and the StateFlags explanation**.
+
+The self-test prints a machine-readable `i18n: lang=… keys=… missing=…` line, so adding a language is a
+matter of adding one column in `Localization.cs` (the test suite then fails loudly if a translation is missing).
+
+> Console note: if the selected language contains characters your console code page cannot represent
+> (e.g. Korean in a GBK console), the CLI switches its output to UTF-8 automatically instead of printing `?`.
 
 ---
 
@@ -248,9 +268,10 @@ tests\run-tests.cmd
 ```
 
 Builds a synthetic Steam root under `tests\steamrootA|B` (placeholder files created with
-`SetLength`, so they occupy no real space) and runs **45 assertions**: empty folder, leftover folders,
+`SetLength`, so they occupy no real space) and runs **61 assertions**: empty folder, leftover folders,
 complete-but-no-ACF, duplicate install, wrong AppID, damaged ACF repair, generated ACF re-scan,
-StateFlags rendering, English default and "no missing translations" for all 8 languages.
+StateFlags rendering per language, English by default, "no missing translations" for all 8 languages,
+and that starting the tool never rewrites the language settings file.
 The real Steam library is never touched (`STEAM_ACF_ROOT` isolates everything).
 
 ## 11. Project layout
@@ -261,7 +282,7 @@ AcfCore.cs               appinfo.vdf parser, folder probe, completeness verifier
 SteamACFManagerGUI.cs    GUI (WinForms) + its CLI commands
 SteamACFManager.cs       standalone console build
 build.cmd / build-cli.cmd
-tests\                   synthetic Steam root builder + regression suite (45 checks)
+tests\                   synthetic Steam root builder + regression suite (61 checks)
 SteamACFManager.exe      prebuilt GUI build
 SteamACFManagerCLI.exe   prebuilt console build
 LICENSE                  MIT
@@ -314,13 +335,14 @@ public `buildid`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示「开始
 工具会拒绝——那样写「已安装」只会让 Steam 重新下载整包。它只修 Steam 自己的登记信息，
 不绕过所有权/DRM，也不修改任何游戏文件。
 
-界面默认英文，可在「重新扫描」左边的下拉框切换 8 种语言；`StateFlags` 列显示为
-`4 (FullyInstalled)`、`6 (UpdateRequired | FullyInstalled)` 这种「数字 + 英文含义」形式，列宽自适应不会截断。
+界面默认英文，可在「重新扫描」左边的下拉框切换 8 种语言；`StateFlags` 列显示为「数字 + 该状态位的含义」，
+**含义文字会跟随界面语言**：英文 `4 (FullyInstalled)`、中文 `4 (已完整安装)`、`6 (需要更新 | 已完整安装)`、
+日文 `4 (完全インストール済み)`……列宽按当前语言实测自适应，切换语言也不会截断。
 
 修复会保留原 ACF 里描述「磁盘上这份内容」的 manifest（可能比缓存的当前版本旧），只在原值无效时才用缓存补；
 生成前必须先通过内容校验，否则一律拒绝并给出「实测 X / 预期 Y（百分比）」。操作前请关闭 Steam。
 
-编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（45 项断言全部通过）。
+编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（61 项断言全部通过）。
 
 ### 许可证
 

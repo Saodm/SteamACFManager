@@ -100,6 +100,7 @@ namespace SteamACFManager
         private static int Main(string[] args)
         {
             Loc.Initialize();   // 默认英文；可用 STEAM_ACF_LANG 环境变量切换
+            Loc.EnsureConsoleEncoding();   // 韩文等 GBK 表示不了的语言自动切 UTF-8
             if (!DetectSteam())
             {
                 Console.WriteLine(Loc.T("cli.notFound"));
