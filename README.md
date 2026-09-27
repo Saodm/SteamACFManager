@@ -264,7 +264,17 @@ build.cmd / build-cli.cmd
 tests\                   synthetic Steam root builder + regression suite (45 checks)
 SteamACFManager.exe      prebuilt GUI build
 SteamACFManagerCLI.exe   prebuilt console build
+LICENSE                  MIT
 ```
+
+## 12. License
+
+MIT — see [LICENSE](LICENSE). © 2026 Saodm <saodm262@outlook.com>.
+
+The prebuilt `SteamACFManager.exe` / `SteamACFManagerCLI.exe` are covered by the same license.
+You are free to use, modify and redistribute them; they only read and write Steam's own metadata
+(cache + ACF files) and never modify game files. Provided as is, without warranty — use at your own
+risk, and keep a backup of any ACF you touch (the tool does back up repaired ACFs as `.bak`).
 
 ---
 
@@ -312,4 +322,9 @@ public `buildid`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示「开始
 
 编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（45 项断言全部通过）。
 
-> 说明：仓库未附带开源许可证（License），如需开源请自行添加（例如 MIT）。
+### 许可证
+
+本项目以 **MIT 许可证**开源，详见 [LICENSE](LICENSE)。版权归 © 2026 Saodm（saodm262@outlook.com）所有。
+随附的 `SteamACFManager.exe` / `SteamACFManagerCLI.exe` 适用同一许可证；工具只读写 Steam 自己的元数据
+（缓存与 ACF 文件），不会修改任何游戏文件，软件按「现状」提供、不附带任何担保——使用前请自行备份，
+被修复的 ACF 会自动存一份 `.bak`。
