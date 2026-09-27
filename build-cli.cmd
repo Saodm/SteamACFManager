@@ -13,7 +13,7 @@ if not exist "%CSC%" (
 pushd "%~dp0"
 "%CSC%" /nologo /codepage:65001 /target:exe ^
   /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll ^
-  /out:SteamACFManagerCLI.exe Localization.cs AcfCore.cs SteamACFManager.cs
+  /out:SteamACFManagerCLI.exe Localization.cs AcfCore.cs SteamEvidence.cs SteamACFManager.cs
 set RC=%ERRORLEVEL%
 popd
 if %RC% NEQ 0 (echo [Ê§°Ü] ±àÒë³ö´í & exit /b %RC%)

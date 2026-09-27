@@ -7,7 +7,42 @@ New-Item -ItemType Directory -Force -Path "$rootA\steamapps\common", "$rootA\app
 New-Item -ItemType File -Force -Path "$rootA\steam.exe" | Out-Null
 
 Copy-Item 'd:\steam\appcache\appinfo.vdf' "$rootA\appcache\appinfo.vdf" -Force
-Copy-Item 'd:\steam\steamapps\appmanifest_413150.acf' "$rootB\steamapps\appmanifest_413150.acf" -Force
+# 库B 的 Stardew Valley ACF 由夹具自己写（不复制真实机器上的文件）：
+# 真实机器上的 ACF 会被工具本身改写（SizeOnDisk 变成实测值），复制过来会让「A 库是完整重复副本」这个前提失效。
+@'
+"AppState"
+{
+	"appid"		"413150"
+	"Universe"		"1"
+	"name"		"Stardew Valley"
+	"StateFlags"		"4"
+	"installdir"		"Stardew Valley"
+	"SizeOnDisk"		"691846347"
+	"StagingSize"		"0"
+	"buildid"		"16826371"
+	"UpdateResult"		"0"
+	"InstalledDepots"
+	{
+		"413151"
+		{
+			"manifest"		"1"
+			"size"		"691846347"
+		}
+	}
+}
+'@ | Set-Content -Path "$rootB\steamapps\appmanifest_413150.acf" -Encoding UTF8
+
+# 本地证据：content_log 的「最近一次完成更新」记录 + depotcache 里对应的 manifest
+#   - 4001890：记录的 buildid/gid 与 appinfo 的 public buildid 相同、但 manifest gid 不同（真实机器上的情形）
+#   - 322330 ：记录的 buildid/gid 都与 appinfo 的 public 不同 → 用于证明 content_log 优先于 public
+New-Item -ItemType Directory -Force -Path "$rootA\logs", "$rootA\depotcache" | Out-Null
+@'
+[2026-09-27 08:05:05] AppID 4001890 finished update, 1 mounted depots (BuildID 25127368) : 4001891 (8322781817822782512),
+[2026-09-27 08:06:10] AppID 322330 finished update, 1 mounted depots (BuildID 24700693) : 322331 (998877),
+'@ | Set-Content -Path "$rootA\logs\content_log.txt" -Encoding UTF8
+foreach ($m in @('4001891_8322781817822782512', '322331_998877')) {
+  [System.IO.File]::WriteAllBytes((Join-Path $rootA "depotcache\$m.manifest"), (New-Object byte[] 16))
+}
 
 function New-BigFile([string]$path, [long]$size) {
   $dir = Split-Path $path -Parent

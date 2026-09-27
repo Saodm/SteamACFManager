@@ -213,6 +213,9 @@ namespace SteamACFManager
                 catch { }
             }
             AddLibrary(steamPath);
+            // 本地证据：depotcache（Steam 手里的 manifest）+ content_log（最近一次完成更新的 buildid/depot）
+            DepotCache.EnsureLoaded(steamPath, libraries);
+            ContentLogEvidence.RefreshIfChanged(steamPath);
         }
 
         private static void AddLibrary(string path)
@@ -1033,6 +1036,44 @@ namespace SteamACFManager
             return null;
         }
 
+        /// <summary>
+        /// 把 depot 方案的依据与“Steam 接下来会做什么”写进报告：
+        /// 用的是哪份证据、每个 depot 的 manifest 是否已在 depotcache、与当前 public 相比新旧、staging 是否有残留。
+        /// </summary>
+        private static void AddPlanNotes(List<string> notes, string appid, DepotPlan plan)
+        {
+            if (plan.UsedEvidence)
+                notes.Add(Loc.T("log.evidenceDepots", plan.Depots.Count));
+            if (!string.IsNullOrEmpty(plan.BuildIdSourceKey))
+                notes.Add(Loc.T(plan.BuildIdSourceKey, plan.BuildId));
+            foreach (DepotMeta d in plan.Depots)
+            {
+                if (DepotCache.Has(d.Id, d.Manifest))
+                    notes.Add(Loc.T("log.manifestPresent", d.Id, d.Manifest));
+                else
+                    notes.Add(Loc.T("log.manifestMissing", d.Id, d.Manifest));
+                // 与 Steam 当前 public 的 manifest 对比（同一 build 内 Valve 也可能重切 manifest）
+                DepotMeta live = plan.PublicDepotOf(d.Id);
+                if (live != null && live.HasManifest && live.Manifest != d.Manifest)
+                    notes.Add(Loc.T("log.manifestPublicDiffers", d.Id, d.Manifest, live.Manifest));
+            }
+            if (plan.PublicBuildId > 0 && plan.BuildId > 0)
+            {
+                if (plan.PublicBuildId > plan.BuildId)
+                    notes.Add(Loc.T("log.publicNewer", plan.PublicBuildId, plan.BuildId));
+                else if (plan.PublicBuildId == plan.BuildId && plan.GidDiffersFromPublic > 0)
+                    notes.Add(Loc.T("log.publicSameButManifestOlder", plan.PublicBuildId, plan.GidDiffersFromPublic));
+                else if (plan.PublicBuildId == plan.BuildId)
+                    notes.Add(Loc.T("log.publicSame", plan.PublicBuildId));
+            }
+            // staging 残留只提示、不处理（用户明确要求不碰 downloading 目录）
+            foreach (string lib in libraries)
+            {
+                string staged = Path.Combine(lib, "steamapps", "downloading", appid);
+                if (Directory.Exists(staged)) { notes.Add(Loc.T("log.stagingLeftover", appid)); break; }
+            }
+        }
+
         /// <summary>manifest GID 是否看起来有效（Steam 用的是 64 位无符号数，明显的占位值 0/1 视为无效）。</summary>
         private static bool LooksLikeManifest(string manifest)
         {
@@ -1143,23 +1184,20 @@ namespace SteamACFManager
                      + Loc.T("err.repairHint");
             }
 
-            // depot 组合沿用原 ACF 的集合（那才是这台机器实际装过的 depot/语言/DLC 组合）。
-            // 关键：原 ACF 里记录的 manifest GID 是“磁盘上这份内容”的清单，可能比缓存里的
-            // 当前 public 版本旧（游戏没更新过）。这种情况必须保留原值，否则等于告诉 Steam
-            // 磁盘上是另一个版本，反而会触发重新下载。只有在原值缺失/无效时才用缓存补。
+            // depot 决策交给 DepotPlanner：优先用 content_log 里“最近一次完成更新”的 gid（与磁盘自洽），
+            // 其次用 Steam 缓存的当前 public gid，并逐个核对 manifest 是否已在 depotcache
+            // （不在的话 Steam 会先下载 manifest 再核对文件，就是用户看到的“又在验证”）。
             List<string> notes = new List<string>();
-            List<DepotMeta> depots = new List<DepotMeta>();
-            int refreshed = 0, kept = 0;
+            List<DepotMeta> existingDepots = new List<DepotMeta>();
             foreach (KeyValuePair<string, DepotInfo> kv in acf.Depots)
             {
-                DepotMeta live = meta.FindDepot(kv.Key);
-                long recordedSize;
-                long.TryParse(kv.Value.Size, out recordedSize);
-                bool manifestValid = LooksLikeManifest(kv.Value.Manifest);
-
                 DepotMeta use = new DepotMeta();
                 use.Id = kv.Key;
                 use.DlcAppId = kv.Value.DlcAppId;
+                use.Manifest = kv.Value.Manifest;
+                long recordedSize;
+                if (long.TryParse(kv.Value.Size, out recordedSize)) use.Size = recordedSize;
+                DepotMeta live = meta.FindDepot(kv.Key);
                 if (live != null)
                 {
                     use.Shared = live.Shared;
@@ -1167,43 +1205,15 @@ namespace SteamACFManager
                     use.Language = live.Language;
                     use.OsList = live.OsList;
                 }
-                if (manifestValid)
-                {
-                    use.Manifest = kv.Value.Manifest;
-                    use.Size = recordedSize;
-                    kept++;
-                    if (live != null && live.HasManifest && live.Manifest != kv.Value.Manifest)
-                        notes.Add(Loc.T("log.depotOldManifest", kv.Key, kv.Value.Manifest, live.Manifest));
-                }
-                else if (live != null && live.HasManifest)
-                {
-                    use.Manifest = live.Manifest;
-                    use.Size = live.Size;
-                    refreshed++;
-                    notes.Add(Loc.T("log.depotFixed", kv.Key, kv.Value.Manifest));
-                }
-                else
-                {
-                    use.Manifest = kv.Value.Manifest;
-                    use.Size = recordedSize;
-                    notes.Add(Loc.T("log.depotKeptInvalid", kv.Key));
-                }
-                depots.Add(use);
+                existingDepots.Add(use);
             }
-
-            // 原 ACF 缺失、但缓存里该 AppID 有、且是本机当前需要的 depot（例如语言包）→ 不自动添加，
-            // 避免凭空多出 Steam 未安装的 depot。只有当原 ACF 一个 depot 都没有时才整体重建。
-            if (depots.Count == 0)
-            {
-                depots = AcfWriter.PickInstalledDepots(meta, chk.ActualBytes, GetSteamLanguage(), notes);
-                notes.Add(Loc.T("log.depotRebuilt", depots.Count));
-            }
-            else
-            {
-                notes.Add(Loc.T("log.depotKept", depots.Count, kept, refreshed));
-            }
+            DepotPlan plan = DepotPlanner.Build(appid, meta, existingDepots);
+            List<DepotMeta> depots = plan.Depots;
+            if (plan.BuildId > 0) buildid = plan.BuildId;
+            notes.AddRange(plan.Notes);
+            notes.Add(Loc.T("log.depotSetKept", depots.Count));
+            AddPlanNotes(notes, appid, plan);
             FillUnknownSizes(depots, chk.ActualBytes);
-
             AcfSpec spec = MakeSpec(acf, meta, depots, buildid, chk.ActualBytes, 4, acf.Language);
             string content = AcfWriter.Build(spec);
             LastPreview = content;
@@ -1276,32 +1286,34 @@ namespace SteamACFManager
             }
 
             List<string> notes = new List<string>();
-            List<DepotMeta> depots;
+            List<DepotMeta> templateDepots = null;
             if (tpl != null && tpl.Depots.Count > 0)
             {
-                depots = new List<DepotMeta>();
+                templateDepots = new List<DepotMeta>();
                 foreach (KeyValuePair<string, DepotInfo> kv in tpl.Depots)
                 {
+                    DepotMeta keep = new DepotMeta();
+                    keep.Id = kv.Key;
+                    keep.Manifest = kv.Value.Manifest;
+                    long sz;
+                    if (long.TryParse(kv.Value.Size, out sz)) keep.Size = sz;
+                    keep.DlcAppId = kv.Value.DlcAppId;
                     DepotMeta live = meta.FindDepot(kv.Key);
-                    if (live != null && live.HasManifest) depots.Add(live);
-                    else
+                    if (live != null)
                     {
-                        DepotMeta keep = new DepotMeta();
-                        keep.Id = kv.Key;
-                        keep.Manifest = kv.Value.Manifest;
-                        long sz;
-                        if (long.TryParse(kv.Value.Size, out sz)) keep.Size = sz;
-                        keep.DlcAppId = kv.Value.DlcAppId;
-                        depots.Add(keep);
+                        keep.Shared = live.Shared;
+                        keep.SharedOwner = live.SharedOwner;
+                        keep.Language = live.Language;
+                        keep.OsList = live.OsList;
                     }
+                    templateDepots.Add(keep);
                 }
-                notes.Add(Loc.T("log.depotFromTemplate", depots.Count));
             }
-            else
-            {
-                depots = AcfWriter.PickInstalledDepots(meta, chk.ActualBytes, GetSteamLanguage(), notes);
-                notes.Add(Loc.T("log.depotPicked", depots.Count));
-            }
+            DepotPlan plan = DepotPlanner.Build(appid, meta, templateDepots);
+            List<DepotMeta> depots = plan.Depots;
+            if (plan.BuildId > 0) meta.BuildId = plan.BuildId;   // 用自洽的 buildid
+            notes.AddRange(plan.Notes);
+            AddPlanNotes(notes, appid, plan);
             if (depots.Count == 0)
                 return Loc.T("err.noUsableDepots", appid);
             FillUnknownSizes(depots, chk.ActualBytes);

@@ -49,8 +49,9 @@ game folder alone is invisible to it.
 1. Close Steam.
 2. Start the tool — the folder is listed as **⚠ Missing ACF** (files verified complete, no ACF in any library).
 3. Select it and press **Repair / Generate Selected**. The ACF is written into that library's
-   `steamapps` folder with the current public `buildid` and depot manifests taken from Steam's own
-   cache, so Steam accepts the files already on disk instead of re-downloading them.
+   `steamapps` folder; `buildid` and every depot manifest come from the local receipts in §4.1
+   (`content_log.txt` of the last finished update, plus Steam's own manifest copies in `depotcache`),
+   which describe the files already on disk — so Steam accepts them instead of re-downloading.
 4. Start Steam — the game shows **Play**.
 
 Command line: `SteamACFManager.exe generate "<folder name>"`
@@ -78,7 +79,8 @@ which ends the loop.
    `6 (UpdateRequired | FullyInstalled)`.
 3. Press **Repair / Generate Selected**. The folder is verified first (a ~99 % complete download
    passes), the depot manifests that match the files on disk are kept, and the ACF is rewritten with
-   `StateFlags=4`, the measured `SizeOnDisk` and the current public `buildid`. The old ACF is kept as `.bak`.
+   `StateFlags=4`, the measured `SizeOnDisk` and the evidence `buildid` of §4.1 instead of guessing
+   from the current public branch. The old ACF is kept as `.bak`.
 4. Start Steam — the game shows **Play**. If you ever suspect the content really is damaged, you can
    still run "Verify integrity of game files" yourself, once, on your terms.
 
@@ -124,7 +126,31 @@ From that the tool computes *"how big a complete install should be"* (preferring
 Steam itself recorded in an existing ACF of the same AppID) and compares it with the measured folder size.
 When no baseline is available it does **not** guess — the row is reported as *Unverified*.
 
-Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build only) `steamcmd +app_info_print`.
+Fallbacks when the cache is unusable: `steamcmd +app_info_print` (GUI build only), plus the two local
+receipts described below.
+
+### 4.1 Two local receipts that describe *what is actually on disk*
+
+`appinfo.vdf` only knows the **current public** branch — that can be newer than the files on the disk.
+Two local files say what this machine really has:
+
+| Receipt | What it gives |
+|---|---|
+| `Steam\logs\content_log.txt` | for every AppID the last `finished update ... (BuildID <b>) : <depot> (<gid>),…` line → a buildid **and per-depot manifest GIDs that are self-consistent with the files on disk** |
+| `Steam\depotcache\<depot>_<gid>.manifest` (also `steamapps\depotcache`, and in every library) | Steam's own copy of the manifest → if the GID written into the ACF is present here, Steam does not have to download a manifest again |
+
+The ACF is therefore planned with this priority (the report prints which one was used):
+
+1. GID recorded in `content_log.txt` for the last finished update, **if** that manifest is in `depotcache`
+2. GID of the current public branch, if its manifest is cached
+3. the recorded GID (or the public one) even when the manifest is not cached
+4. finally whatever the existing ACF already had
+
+`buildid` follows the `content_log.txt` record (so it matches the files), otherwise the public buildid.
+The report also states what Steam will do next: *nothing to update* / *may update these depots (delta only)* /
+*public build is newer → Steam offers an update*.
+
+
 
 > Cache format notes (v29): header `u32 magic | u32 universe | u64 string-table offset`;
 > records are `appid | size | infoState | lastUpdated | token(8) | 44-byte digest | binary KV`,
@@ -141,12 +167,13 @@ Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build onl
 1. The folder is verified; if it is not complete the repair is **refused** (otherwise Steam would
    believe the game is installed and re-download everything).
 2. The depot set of the existing ACF is kept (that is what this machine really installed).
-3. The manifest GID stored in the ACF describes *the content on disk* and may be older than the
-   current public one — it is **kept** in that case; the cache value is only used when the recorded
-   value is missing/invalid (e.g. `0`, `1`).
-4. `StateFlags=4`, `SizeOnDisk=` measured, `buildid`/`TargetBuildID` = current public build,
-   `Bytes*` counters = measured size, `SharedDepots` with owner AppIDs.
-5. The original file is backed up as `.bak` and a copy is written to the export folder.
+3. Each depot manifest is chosen by the priority in §4.1 — the `content_log.txt` GID of the last
+   finished update comes first, so the bookkeeping matches the files on disk; `depotcache` manifests
+   are never deleted.
+4. `StateFlags=4`, `SizeOnDisk=` measured, `buildid`/`TargetBuildID` = evidence buildid (§4.1),
+   `Bytes*` counters = measured size, `StagingSize=0`, `SharedDepots` with owner AppIDs.
+5. Leftover `steamapps\downloading\<appid>` folders are only *reported* (moving files is out of scope).
+6. The original file is backed up as `.bak` and a copy is written to the export folder.
 
 **Generate (files complete, ACF missing)**
 
@@ -155,10 +182,11 @@ Fallbacks when the cache is unusable: `logs\content_log.txt`, and (GUI build onl
    AppID (here or in another library), no current `buildid`, no usable depot manifest.
 3. Depots written = required base depots + language packs that fit the measured size
    (DLC depots are left out: ownership cannot be verified offline).
-4. `buildid` and every depot manifest come from Steam's cache (current public branch), so Steam's
-   verification matches; if the files are an older build Steam patches them on the next start.
+4. `buildid` and every depot manifest come from the local receipts of §4.1 (`content_log.txt` first,
+   then the public branch), so Steam's bookkeeping matches the files on disk; if the disk really is an
+   older build Steam patches the delta on the next start.
 
-> Close Steam before repairing/generating, then restart it.
+> Close Steam before repairing/generating, then restart it — Steam rewrites ACF files while it runs.
 
 ---
 
@@ -268,11 +296,14 @@ tests\run-tests.cmd
 ```
 
 Builds a synthetic Steam root under `tests\steamrootA|B` (placeholder files created with
-`SetLength`, so they occupy no real space) and runs **66 assertions**: empty folder, leftover folders,
+`SetLength`, so they occupy no real space) and runs **68 assertions**: empty folder, leftover folders,
 complete-but-no-ACF, duplicate install, wrong AppID, damaged ACF repair, generated ACF re-scan,
+the `content_log.txt` + `depotcache` evidence being preferred over the public branch,
 StateFlags rendering per language, English by default, "no missing translations" for all 8 languages,
 and that starting the tool never rewrites the language settings file.
 The real Steam library is never touched (`STEAM_ACF_ROOT` isolates everything).
+Per-check results are also written to `tests\out\results.txt` (UTF-8), which is easier to read than the
+console when the console code page cannot represent the current language.
 
 ## 11. Project layout
 
@@ -282,7 +313,7 @@ AcfCore.cs               appinfo.vdf parser, folder probe, completeness verifier
 SteamACFManagerGUI.cs    GUI (WinForms) + its CLI commands
 SteamACFManager.cs       standalone console build
 build.cmd / build-cli.cmd
-tests\                   synthetic Steam root builder + regression suite (66 checks)
+tests\                   synthetic Steam root builder + regression suite (68 checks)
 SteamACFManager.exe      prebuilt GUI build
 SteamACFManagerCLI.exe   prebuilt console build
 LICENSE                  MIT
@@ -317,9 +348,10 @@ DLC / 共享标记。拿不到体积基准时不会乱猜，而是列为「未�
 **① 迁移了游戏文件夹，却忘了迁移 ACF**
 把 `steamapps\common\<游戏>` 复制/搬到别的盘或别的库之后，Steam 只认 ACF 文件，不认光秃秃的目录，
 于是显示未安装、甚至要重新下载。处理方法：**关掉 Steam → 打开本工具**，该目录会显示为
-**⚠ 缺 ACF（文件完整）→ 选中后点「修复/生成选中项」**，工具会把 ACF 写进那个库的 `steamapps` 目录，
-`buildid` 与每个 depot 的 manifest 都取自 Steam 当前 public 版本，因此 Steam 会直接接受已存在的文件，
-不会重新下载。命令行：`SteamACFManager.exe generate "<文件夹名>"`。
+**⚠ 缺 ACF（文件完整）→ 选中后点「修复/生成选中项」**，工具会把 ACF 写进那个库的 `steamapps` 目录。
+`buildid` 和每个 depot 的 manifest 优先取自本机凭证：`logs\content_log.txt` 里最近一次「完成更新」的记录，
+以及 `depotcache` 里 Steam 自己的 manifest 副本——它们描述的就是磁盘上这份内容，所以 Steam 会接受
+已存在的文件，不会重新下载。命令行：`SteamACFManager.exe generate "<文件夹名>"`。
 注意：如果**旧的库还留着一个过期的 ACF**（游戏目录已经不在了），工具会拒绝生成并提示你先删掉那个陈旧
 ACF——否则 Steam 会认为是两份安装；删掉后重新扫描再生成即可。
 
@@ -328,8 +360,9 @@ ACF——否则 Steam 会认为是两份安装；删掉后重新扫描再生成�
 Steam 会反复验证同一个 depot。把状态改回 `4`（FullyInstalled，也就是显示「开始游戏」的状态）即可结束循环。
 处理方法：**关掉 Steam → 打开本工具**，该游戏显示为 **⚠ 需修复**（StateFlags 列会写着
 `6 (UpdateRequired | FullyInstalled)`）→ **选中后点「修复/生成选中项」**：工具先校验目录（约 99% 的
-下载能通过），保留与磁盘文件相符的 depot manifest，并写入 `StateFlags=4`、实测 `SizeOnDisk` 与当前
-public `buildid`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示「开始游戏」。命令行：
+下载能通过），再按本机凭证写入与磁盘相符的 depot manifest 和 `buildid`（见 ① 与 §4.1，不再拿当前 public
+的版本去猜），并写入 `StateFlags=4` 与实测 `SizeOnDisk`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示
+「开始游戏」。命令行：
 `SteamACFManager.exe repair <appid>`（加 `--dry-run` 可先预览不写入）。
 注意：只有目录内容通过校验（≥ 预期完整体积的 90%）时才会写 `StateFlags=4`；如果盘上其实只有 10%，
 工具会拒绝——那样写「已安装」只会让 Steam 重新下载整包。它只修 Steam 自己的登记信息，
@@ -339,10 +372,11 @@ public `buildid`，旧 ACF 备份为 `.bak`；重启 Steam 即可显示「开始
 **含义文字会跟随界面语言**：英文 `4 (FullyInstalled)`、中文 `4 (已完整安装)`、`6 (需要更新 | 已完整安装)`、
 日文 `4 (完全インストール済み)`……列宽按当前语言实测自适应，切换语言也不会截断。
 
-修复会保留原 ACF 里描述「磁盘上这份内容」的 manifest（可能比缓存的当前版本旧），只在原值无效时才用缓存补；
-生成前必须先通过内容校验，否则一律拒绝并给出「实测 X / 预期 Y（百分比）」。操作前请关闭 Steam。
+修复会保留原 ACF 里描述「磁盘上这份内容」的 manifest（可能比当前 public 版本旧），并优先采用
+`content_log.txt` 记录的 gid；生成前必须先通过内容校验，否则一律拒绝并给出「实测 X / 预期 Y（百分比）」。
+操作前请关闭 Steam——Steam 运行时会自己改写 ACF 文件。
 
-编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（66 项断言全部通过）。
+编译：`build.cmd`（图形版）/ `build-cli.cmd`（命令行版）；测试：`tests\run-tests.cmd`（68 项断言全部通过）。
 
 ### 许可证
 

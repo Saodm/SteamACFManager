@@ -17,9 +17,17 @@ $outDir = Join-Path $here 'out'
 
 $script:pass = 0
 $script:fail = 0
+$script:resultFile = Join-Path $outDir 'results.txt'
+if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
+Set-Content -Path $script:resultFile -Value ("# Steam ACF 管理器 回归测试结果  " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) -Encoding UTF8
 function Check([string]$name, [bool]$ok, [string]$detail) {
-  if ($ok) { $script:pass++; Write-Host ("  [通过] " + $name) -ForegroundColor Green }
-  else { $script:fail++; Write-Host ("  [失败] " + $name + "  -> " + $detail) -ForegroundColor Red }
+  if ($ok) {
+    $script:pass++; Write-Host ("  [通过] " + $name) -ForegroundColor Green
+    Add-Content -Path $script:resultFile -Value ("PASS  " + $name) -Encoding UTF8
+  } else {
+    $script:fail++; Write-Host ("  [失败] " + $name + "  -> " + $detail) -ForegroundColor Red
+    Add-Content -Path $script:resultFile -Value ("FAIL  " + $name + "  -> " + $detail) -Encoding UTF8
+  }
 }
 function Decode-Output([byte[]]$bytes) {
   # 工具在“当前控制台代码页表示不了”的语言下会输出 UTF-8，否则是 GBK；这里先试 UTF-8
@@ -80,8 +88,10 @@ $gen | Set-Content -Path (Join-Path $outDir 'generate.txt') -Encoding UTF8
 $acfHowToFish = Join-Path $testRoot 'steamapps\appmanifest_4001890.acf'
 Check '生成命令成功' ($gen -match 'OK') ($gen -split "`r?`n" | Select-Object -First 3)
 $acfText = Get-Content $acfHowToFish -Raw
-Check 'buildid 取自 Steam 本地缓存 (25127368)' ($acfText -match '"buildid"\s+"25127368"') 'missing buildid'
-Check 'depot manifest 为当前 public 版本' ($acfText -match '3889140805796509645') 'missing manifest'
+Check 'buildid 取自 content_log 的完成更新记录' ($acfText -match '"buildid"\s+"25127368"') 'missing buildid'
+Check 'manifest 取自 content_log 记录的 gid' ($acfText -match '8322781817822782512') 'missing manifest'
+Check '不再使用 appinfo 的当前 public gid' ($acfText -notmatch '3889140805796509645') 'public gid used'
+Check '生成报告写明 depot 用的是哪个 manifest' (($gen -match '4001891') -and ($gen -match '8322781817822782512')) ($gen -split "`r?`n" | Where-Object { $_ -match 'manifest' } | Select-Object -First 2)
 Check 'StateFlags=4' ($acfText -match '"StateFlags"\s+"4"') 'missing StateFlags'
 Check 'SizeOnDisk 为实测体积' ($acfText -match '"SizeOnDisk"\s+"639274590"') 'missing SizeOnDisk'
 Check 'InstalledDepots 含 depot 4001891' ($acfText -match '"4001891"') 'missing depot'
@@ -112,8 +122,8 @@ $acfDst = Join-Path $testRoot 'steamapps\appmanifest_322330.acf'
 $dstText = Get-Content $acfDst -Raw
 Check '修复命令成功' ($rep -match 'OK') ($rep -split "`r?`n" | Select-Object -First 3)
 Check 'StateFlags=4' ($dstText -match '"StateFlags"\s+"4"') 'missing StateFlags'
-Check 'buildid=当前 public 版本 (24700692)' ($dstText -match '24700692') 'missing buildid'
-Check 'manifest 已补全为有效值' ($dstText -match '3356367044060314490') 'missing manifest'
+Check 'buildid 优先取自 content_log（而非 appinfo 的 public 24700692）' ($dstText -match '"buildid"\s+"24700693"') 'missing buildid'
+Check 'manifest 取自 content_log 记录的 gid（998877）' ($dstText -match '998877') 'missing manifest'
 Check 'SharedDepots 带归属 AppID' ($dstText -match '"228982"\s+"228980"') 'missing shared owner'
 Check '原 ACF 已备份为 .bak' (Test-Path ($acfDst + '.bak')) 'no backup'
 
@@ -203,5 +213,7 @@ Write-Host ""
 Write-Host "==================================================="
 Write-Host ("  通过 {0} 项，失败 {1} 项" -f $script:pass, $script:fail)
 Write-Host "==================================================="
+Add-Content -Path $script:resultFile -Value ("SUMMARY  pass={0} fail={1}" -f $script:pass, $script:fail) -Encoding UTF8
+Write-Host ("  结果明细（UTF-8）: " + $script:resultFile)
 if ($script:fail -gt 0) { exit 1 }
 exit 0

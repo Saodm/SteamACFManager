@@ -15,7 +15,7 @@ pushd "%~dp0"
   /r:System.Windows.Forms.dll /r:System.Drawing.dll ^
   /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll ^
   /r:System.Web.Extensions.dll /r:Microsoft.VisualBasic.dll ^
-  /out:SteamACFManager.exe Localization.cs AcfCore.cs SteamACFManagerGUI.cs
+  /out:SteamACFManager.exe Localization.cs AcfCore.cs SteamEvidence.cs SteamACFManagerGUI.cs
 set RC=%ERRORLEVEL%
 popd
 if %RC% NEQ 0 (echo [Ê§°Ü] ±àÒë³ö´í & exit /b %RC%)
