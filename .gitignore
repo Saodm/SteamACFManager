@@ -1,0 +1,22 @@
+# 运行时产物（导出副本）
+export/
+
+# 回归测试的合成环境与输出（tests\run-tests.cmd 会自动重建）
+tests/steamrootA/
+tests/steamrootB/
+tests/out/
+tests/*.txt
+
+# 打包产物
+dist/
+
+# 编译中间文件
+bin/
+obj/
+*.pdb
+*.user
+*.suo
+
+# 旧版备份 / 本地工具
+*.bak
+.vs/
