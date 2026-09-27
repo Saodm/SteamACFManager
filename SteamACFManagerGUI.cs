@@ -1401,7 +1401,6 @@ namespace SteamACFManager
             langCombo.DropDownStyle = ComboBoxStyle.DropDownList;
             langCombo.Width = 130;
             langCombo.FlatStyle = FlatStyle.System;
-            langCombo.Margin = new Padding(0, 2, 6, 0);
             foreach (LanguageInfo li in Loc.Languages) langCombo.Items.Add(li.NativeName);
             // 注意：这里不设 SelectedIndex —— 交给 ApplyLanguage() 在“抑制变更”状态下设置，
             // 否则控件初始化会被当成用户切换语言，把当前语言误写进 settings.ini。
@@ -1427,6 +1426,17 @@ namespace SteamACFManager
             topRight.Controls.Add(langLabel);
             topRight.Controls.Add(langCombo);
             topRight.Controls.Add(rescanBtn);
+
+            // 「重新扫描」与左侧语言下拉框必须等高：ComboBox 的高度由字体决定（PreferredHeight，无法手动加高），
+            // 所以以它为准把按钮设成同样高度，并用 MinimumSize 防止布局过程把按钮压扁
+            // （压扁后中文字会贴边，看起来像被遮挡）。
+            int rowHeight = langCombo.PreferredHeight;
+            rescanBtn.AutoSize = false;
+            rescanBtn.MinimumSize = new Size(0, rowHeight);
+            rescanBtn.Height = rowHeight;
+            rescanBtn.Margin = new Padding(0);
+            langCombo.Margin = new Padding(0, 0, 6, 0);
+            langLabel.Margin = new Padding(0, Math.Max(0, (rowHeight - langLabel.PreferredHeight) / 2 + 1), 4, 0);
 
             top.Controls.Add(steamLabel);
             top.Controls.Add(topRight);
