@@ -65,7 +65,7 @@ Notes:
 * Only folders that pass the completeness check can be generated; leftover shells are reported as
   *Leftovers* and are refused.
 
-### 2.2 Steam is stuck in "verifying files" (…99 % → validation failed → back to 1 %, forever)
+### 2.2 Steam is stuck in "verifying files" (…99 % → validation failed → back to xx %, forever)
 
 Some downloads never finish: Steam reaches ~99 %, reports *file validation failed*, rolls back to an
 earlier state and starts over, again and again. That loop comes from `StateFlags` in the ACF: while the
